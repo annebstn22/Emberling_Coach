@@ -1,3 +1,5 @@
+"use client"
+
 import type React from "react"
 
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
@@ -37,8 +39,6 @@ import {
   UserPlus,
   LogOut,
 } from "lucide-react"
-import { generateText } from "ai"
-import { google } from "@ai-sdk/google"
 
 type CoachMode = "normal" | "baymax" | "edna"
 
@@ -364,9 +364,7 @@ export default function WritingCoachApp() {
     const taskPersonality = getCoachPersonality(newCoachMode)
 
     try {
-      const { text } = await generateText({
-        model: google("gemini-2.5-flash"),
-        prompt: `You are ${taskPersonality.name}, a writing coach. Reformulate these existing writing tasks to match your ${taskPersonality.taskStyle} personality while keeping the same core objectives and structure.
+      const prompt = `You are ${taskPersonality.name}, a writing coach. Reformulate these existing writing tasks to match your ${taskPersonality.taskStyle} personality while keeping the same core objectives and structure.
 
 PERSONALITY GUIDELINES:
 ${
@@ -416,8 +414,19 @@ Return the same structure but with titles and descriptions rewritten in ${taskPe
     "focus": "same_focus",
     "suggestedDuration": same_duration
   }
-]`,
+]`
+
+      const response = await fetch("/api/reformulate-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
       })
+
+      if (!response.ok) {
+        throw new Error("Failed to reformulate tasks")
+      }
+
+      const { text } = await response.json()
 
       let cleanedText = text.trim()
       cleanedText = cleanedText.replace(/```json\n?|\n?```/g, "")
@@ -475,9 +484,7 @@ Return the same structure but with titles and descriptions rewritten in ${taskPe
           await new Promise((resolve) => setTimeout(resolve, 2000 * attempt))
         }
 
-        const { text } = await generateText({
-          model: google("gemini-2.5-flash"),
-          prompt: `You are ${taskPersonality.name}, a writing coach with a ${taskPersonality.taskStyle} approach. Break down the following writing project into detailed, manageable WRITING tasks.
+        const prompt = `You are ${taskPersonality.name}, a writing coach with a ${taskPersonality.taskStyle} approach. Break down the following writing project into detailed, manageable WRITING tasks.
 
 PERSONALITY GUIDELINES:
 ${
@@ -529,8 +536,19 @@ Focus areas: outline, draft, edit, review
 Descriptions: 50-150 words with specific guidance in character
 Duration: vary between 10-45 minutes
 
-Writing project: "${projectDescription}"`,
+Writing project: "${projectDescription}"`
+
+        const response = await fetch("/api/generate-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
         })
+
+        if (!response.ok) {
+          throw new Error("Failed to generate tasks")
+        }
+
+        const { text } = await response.json()
 
         let cleanedText = text.trim()
         cleanedText = cleanedText.replace(/```json\n?|\n?```/g, "")
@@ -683,9 +701,7 @@ Writing project: "${projectDescription}"`,
           await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
         }
 
-        const { text } = await generateText({
-          model: google("gemini-2.5-flash"),
-          prompt: `You are ${evalPersonality.name} evaluating writing work. Provide feedback in your ${evalPersonality.feedbackStyle} style.
+        const prompt = `You are ${evalPersonality.name} evaluating writing work. Provide feedback in your ${evalPersonality.feedbackStyle} style.
 
 PERSONALITY GUIDELINES:
 ${
@@ -733,8 +749,19 @@ Return this structure:
 }
 
 Task: ${currentTask.title} (${currentTask.duration}min, ${currentTask.focus})
-Work: "${taskInput || "No input provided"}"`,
+Work: "${taskInput || "No input provided"}"`
+
+        const response = await fetch("/api/evaluate-progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
         })
+
+        if (!response.ok) {
+          throw new Error("Failed to evaluate progress")
+        }
+
+        const { text } = await response.json()
 
         let cleanedText = text.trim()
         cleanedText = cleanedText.replace(/```json\n?|\n?```/g, "")
