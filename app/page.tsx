@@ -3,6 +3,7 @@
 import type React from "react"
 
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import { Slider } from "@/components/ui/slider"
 
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
@@ -419,7 +420,7 @@ Return the same structure but with titles and descriptions rewritten in ${taskPe
       const response = await fetch("/api/reformulate-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.JSON.stringify({ prompt }),
       })
 
       if (!response.ok) {
@@ -729,9 +730,16 @@ ${
 `
 }
 
-IMPORTANT: Respond with ONLY valid JSON. Provide EXACTLY 5 specific, actionable bullet points.
+CRITICAL: Respond with ONLY valid JSON. No explanations before or after. Just the JSON object.
 
-Return this structure:
+Task details:
+- Title: ${currentTask.title}
+- Duration: ${currentTask.duration} minutes
+- Focus: ${currentTask.focus}
+- User's work: "${taskInput || "No input provided"}"
+- Word count: ${taskInput.trim().split(/\s+/).length} words
+
+Return EXACTLY this JSON structure (no markdown, no additional text):
 {
   "feedback": "Brief overall assessment in ${evalPersonality.name}'s voice (max 30 words)",
   "actionablePoints": [
@@ -741,15 +749,14 @@ Return this structure:
     "Specific action item 4 in ${evalPersonality.name}'s style",
     "Specific action item 5 in ${evalPersonality.name}'s style"
   ],
-  "shouldContinue": true/false,
-  "qualityScore": 1-10,
-  "needsImprovement": true/false,
-  "suggestNewTask": true/false,
-  "newTaskSuggestion": "brief description if needed"
+  "shouldContinue": true,
+  "qualityScore": 7,
+  "needsImprovement": false,
+  "suggestNewTask": false,
+  "newTaskSuggestion": ""
 }
 
-Task: ${currentTask.title} (${currentTask.duration}min, ${currentTask.focus})
-Work: "${taskInput || "No input provided"}"`
+Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${currentTask.duration}-minute task.`
 
         const response = await fetch("/api/evaluate-progress", {
           method: "POST",
@@ -784,13 +791,23 @@ Work: "${taskInput || "No input provided"}"`
         console.error(`Evaluation attempt ${attempt} failed:`, error)
 
         if (attempt === maxRetries) {
+          // Use a more detailed fallback based on word count
+          const wordCount = taskInput.trim().split(/\s+/).length
+          const hasSubstantialWork = wordCount >= 50
+
           evaluation = {
             feedback:
               currentProject.coachMode === "baymax"
-                ? "I detect good effort. Progress indicators are positive."
+                ? hasSubstantialWork
+                  ? "I detect good effort. Progress indicators are positive."
+                  : "I detect minimal output. Optimal progress requires more content."
                 : currentProject.coachMode === "edna"
-                  ? "Not terrible, darling. But we can do better."
-                  : "Good effort! Let's refine this work further.",
+                  ? hasSubstantialWork
+                    ? "Not terrible, darling. But we can do better."
+                    : "Sweetie, this isn't enough. I need to see more work!"
+                  : hasSubstantialWork
+                    ? "Good effort! Let's refine this work further."
+                    : "This needs more work. Let's add more content.",
             actionablePoints:
               currentProject.coachMode === "baymax"
                 ? [
@@ -815,9 +832,9 @@ Work: "${taskInput || "No input provided"}"`
                       "Include concrete examples to illustrate your ideas",
                       "Check for grammar and spelling errors throughout",
                     ],
-            shouldContinue: taskInput.trim().length > 50,
-            qualityScore: taskInput.trim().length > 100 ? 7 : 4,
-            needsImprovement: taskInput.trim().length < 100,
+            shouldContinue: hasSubstantialWork,
+            qualityScore: hasSubstantialWork ? 6 : 3,
+            needsImprovement: !hasSubstantialWork,
             suggestNewTask: false,
             newTaskSuggestion: "",
           }
@@ -981,6 +998,134 @@ Work: "${taskInput || "No input provided"}"`
     const selectedTask = updatedProject.tasks[taskIndex]
     setCustomDuration([selectedTask.suggestedDuration])
     startCurrentTask(updatedProject)
+  }
+
+  const breakTaskIntoChunks = async (task: Task, desiredDuration: number) => {
+    // If desired duration is same or more than suggested, just update duration
+    if (desiredDuration >= task.suggestedDuration) {
+      return [{ ...task, duration: desiredDuration }]
+    }
+
+    // Calculate fallback chunks first (so we always have something to return)
+    const numChunks = Math.ceil(task.suggestedDuration / desiredDuration)
+    const fallbackChunks = Array.from({ length: numChunks }, (_, index) => ({
+      ...task,
+      id: `${task.id}_chunk_${index + 1}`,
+      title: `${task.title} - Part ${index + 1} of ${numChunks}`,
+      description: `${task.description}
+
+**Part ${index + 1} of ${numChunks}** (${desiredDuration} minutes)
+Focus on this section for this work session. You'll tackle the other parts separately.`,
+      duration: desiredDuration,
+      suggestedDuration: desiredDuration,
+      isSubtask: true,
+      parentTaskId: task.id,
+      completed: false,
+      needsImprovement: false,
+      attempts: 0,
+    }))
+
+    // Try AI-powered chunking
+    try {
+      const prompt = `You are a writing coach. Break this task into ${numChunks} smaller chunks of ${desiredDuration} minutes each.
+
+CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, just the JSON object.
+
+Task to break down:
+- Title: ${task.title}
+- Description: ${task.description}
+- Focus: ${task.focus}
+- Original duration: ${task.suggestedDuration} minutes
+- Target chunk size: ${desiredDuration} minutes
+
+Return EXACTLY this JSON structure (no markdown, no additional text):
+{
+  "subtasks": [
+    {
+      "id": "subtask_1",
+      "title": "Part 1: [specific focus]",
+      "description": "[Specific instructions for this ${desiredDuration}-minute chunk]",
+      "focus": "${task.focus}",
+      "duration": ${desiredDuration}
+    }
+  ]
+}
+
+Make each chunk have unique, actionable instructions.`
+
+      const response = await fetch("/api/generate-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+
+        // Check if there's an error in the response
+        if (data.error) {
+          console.error("API returned error:", data.error)
+          return fallbackChunks
+        }
+
+        const { text } = data
+        let cleanedText = text.trim()
+
+        // Try to find the JSON object
+        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          cleanedText = jsonMatch[0]
+        }
+
+        const result = JSON.parse(cleanedText)
+
+        if (result.subtasks && Array.isArray(result.subtasks) && result.subtasks.length > 0) {
+          return result.subtasks.map((subtask: any, index: number) => ({
+            ...subtask,
+            id: `${task.id}_chunk_${index + 1}`,
+            suggestedDuration: subtask.duration || desiredDuration,
+            isSubtask: true,
+            parentTaskId: task.id,
+            completed: false,
+            needsImprovement: false,
+            attempts: 0,
+          }))
+        }
+      }
+    } catch (error) {
+      console.error("AI chunking failed, using fallback:", error)
+    }
+
+    // Always return fallback chunks if AI fails
+    console.log(`Using fallback: Creating ${numChunks} chunks of ${desiredDuration} minutes each`)
+    return fallbackChunks
+  }
+
+  const updateTaskDuration = async () => {
+    if (!currentProject || !currentTask) return
+
+    const newDuration = customDuration[0]
+
+    if (newDuration < currentTask.suggestedDuration) {
+      // Break task into chunks
+      const chunks = await breakTaskIntoChunks(currentTask, newDuration)
+      if (chunks.length > 1) {
+        const updatedProject = { ...currentProject }
+        // Replace current task with chunks
+        updatedProject.tasks.splice(currentProject.currentTaskIndex, 1, ...chunks)
+        setCurrentProject(updatedProject)
+        setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+        startCurrentTask(updatedProject)
+        return
+      }
+    }
+
+    // Simple duration update
+    const updatedProject = { ...currentProject }
+    updatedProject.tasks[currentProject.currentTaskIndex].duration = newDuration
+    setCurrentProject(updatedProject)
+    setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+    setTimeRemaining(newDuration * 60)
   }
 
   const formatTime = (seconds: number) => {
@@ -1259,7 +1404,7 @@ Work: "${taskInput || "No input provided"}"`
                       <span>🤖</span>
                       <div>
                         <div className="font-medium">Baymax</div>
-                        <div className="text-xs text-gray-500">Gentle, supportive healthcare robot</div>
+                        <div className="text-xs text-gray-500">Gentle, healthcare robot</div>
                       </div>
                     </div>
                   </SelectItem>
@@ -1402,17 +1547,38 @@ Work: "${taskInput || "No input provided"}"`
                       if (!currentProject) return
                       const updatedProject = { ...currentProject }
                       const currentTaskIndex = currentProject.currentTaskIndex
+
+                      // Mark CURRENT task as complete (not next task)
                       updatedProject.tasks[currentTaskIndex].completed = true
                       updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
                       updatedProject.tasks[currentTaskIndex].completedAt = new Date()
                       updatedProject.tasks[currentTaskIndex].needsImprovement = false
                       updatedProject.tasks[currentTaskIndex].feedback = "Marked as good enough by user"
                       updatedProject.completedWork.push(taskInput)
+
+                      // Save the project
                       setCurrentProject(updatedProject)
                       setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-                      setShowNextButton(true)
-                      setShowRedoButton(false)
-                      setShowCreateTaskButton(false)
+
+                      // Automatically move to next task (no confirmation page)
+                      updatedProject.currentTaskIndex += 1
+
+                      if (updatedProject.currentTaskIndex >= updatedProject.tasks.length) {
+                        // If last task, go to completion screen
+                        setCurrentState("completed")
+                      } else {
+                        // Load next task immediately
+                        setCurrentProject(updatedProject)
+                        setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+                        setShowNextButton(false)
+                        setShowRedoButton(false)
+                        setShowCreateTaskButton(false)
+
+                        const nextTask = updatedProject.tasks[updatedProject.currentTaskIndex]
+                        setCustomDuration([nextTask.suggestedDuration])
+                        setCurrentState("working")
+                        startCurrentTask(updatedProject)
+                      }
                     }}
                     variant="outline"
                     size="lg"
@@ -1682,7 +1848,50 @@ Work: "${taskInput || "No input provided"}"`
                   </div>
                 </div>
 
-                {/* Timer */}
+                {/* Duration Control */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-gray-700">Task Duration</span>
+                    <span className="text-sm text-gray-600">Suggested: {currentTask?.suggestedDuration}min</span>
+                  </div>
+                  <div className="space-y-3">
+                    <Slider
+                      value={customDuration}
+                      onValueChange={setCustomDuration}
+                      max={currentTask?.suggestedDuration || 60}
+                      min={5}
+                      step={5}
+                      className="w-full"
+                    />
+                    <div className="flex items-center justify-between text-sm text-gray-600">
+                      <span>5min</span>
+                      <span className="font-medium">{customDuration[0]}min selected</span>
+                      <span>{currentTask?.suggestedDuration || 60}min</span>
+                    </div>
+                    {customDuration[0] !== currentTask?.duration && (
+                      <div className="space-y-2">
+                        <Button
+                          onClick={updateTaskDuration}
+                          size="sm"
+                          variant="outline"
+                          className="w-full bg-transparent"
+                        >
+                          {customDuration[0] < (currentTask?.suggestedDuration || 20)
+                            ? "Break into Smaller Chunks"
+                            : "Update Duration"}
+                        </Button>
+                        {customDuration[0] < (currentTask?.suggestedDuration || 20) && (
+                          <p className="text-xs text-gray-600">
+                            This will break the task into{" "}
+                            {Math.ceil((currentTask?.suggestedDuration || 20) / customDuration[0])} smaller chunks
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Timer Controls */}
                 <div className="flex items-center justify-center space-x-4 py-4">
                   <div className="text-center">
                     <div className="text-4xl font-mono font-bold text-gray-800 mb-2">{formatTime(timeRemaining)}</div>
