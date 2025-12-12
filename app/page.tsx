@@ -41,6 +41,8 @@ import {
   LogOut,
 } from "lucide-react"
 
+import PreWritingIdeation from "@/components/pre-writing-ideation"
+
 type CoachMode = "normal" | "baymax" | "edna"
 
 interface Task {
@@ -103,8 +105,9 @@ export default function WritingCoachApp() {
   const [isGeneratingTasks, setIsGeneratingTasks] = useState(false)
   const [isReformulatingTasks, setIsReformulatingTasks] = useState(false)
   const [currentState, setCurrentState] = useState<
-    "auth" | "dashboard" | "setup" | "working" | "evaluating" | "completed"
+    "auth" | "tool-select" | "dashboard" | "setup" | "working" | "evaluating" | "completed"
   >("auth")
+  const [selectedTool, setSelectedTool] = useState<"writing-coach" | "pre-writing" | null>(null)
   const [timeRemaining, setTimeRemaining] = useState(0)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [taskInput, setTaskInput] = useState("")
@@ -138,7 +141,7 @@ export default function WritingCoachApp() {
         ...parsedUser,
         createdAt: new Date(parsedUser.createdAt),
       })
-      setCurrentState("dashboard")
+      setCurrentState("tool-select")
 
       // Load user's projects
       const savedProjects = localStorage.getItem(`writing-coach-projects-${parsedUser.id}`)
@@ -271,7 +274,7 @@ export default function WritingCoachApp() {
       localStorage.setItem("writing-coach-user", JSON.stringify(newUser))
 
       setUser(newUser)
-      setCurrentState("dashboard")
+      setCurrentState("tool-select")
     } else {
       if (!email.trim() || !password.trim()) {
         setAuthError("Please fill in all fields")
@@ -290,7 +293,7 @@ export default function WritingCoachApp() {
       // In a real app, you'd verify the password here
       localStorage.setItem("writing-coach-user", JSON.stringify(foundUser))
       setUser(foundUser)
-      setCurrentState("dashboard")
+      setCurrentState("tool-select")
 
       // Load user's projects
       const savedProjects = localStorage.getItem(`writing-coach-projects-${foundUser.id}`)
@@ -317,6 +320,7 @@ export default function WritingCoachApp() {
     setProjects([])
     setCurrentProject(null)
     setCurrentState("auth")
+    setSelectedTool(null)
     setEmail("")
     setPassword("")
     setName("")
@@ -420,7 +424,7 @@ Return the same structure but with titles and descriptions rewritten in ${taskPe
       const response = await fetch("/api/reformulate-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt }),
       })
 
       if (!response.ok) {
@@ -627,7 +631,7 @@ Writing project: "${projectDescription}"`
             ? "I detect a need for comprehensive research documentation. Please compile 400-600 words of research notes. Focus on 5-7 key sources, documenting main points, statistics, and quotes. Organize systematically by themes or chronologically. Optimal completion criteria: Clear source citations, key facts highlighted, personal insights noted, actionable information extracted for your writing health."
             : coachMode === "edna"
               ? "Listen, sweetie, research without notes is just procrastination with extra steps. Write 400-600 words of research notes NOW. Focus on 5-7 key sources, summarize main points, statistics, quotes. Organize by themes or chronologically. Good completion: Clear citations, key facts highlighted, insights noted. No perfectionist dawdling - just get the information down!"
-              : "Research your topic and write comprehensive notes (400-600 words). Focus on 5-7 key sources, summarizing main points, statistics, and quotes. Organize by themes or chronologically. Good completion: Clear source citations, key facts highlighted, personal insights noted, actionable information extracted for your writing.",
+              : "Research your topic and write comprehensive notes (400-600 words). Focus on 5-7 key sources, summarizing main points, statistics, and quotes. Organize by themes or chronologically. Good completion: Clear source citations, personal insights noted, actionable information extracted for your writing.",
         focus: "research",
         duration: 25,
         suggestedDuration: 25,
@@ -1258,13 +1262,114 @@ Make each chunk have unique, actionable instructions.`
     )
   }
 
-  // Dashboard View
+  if (currentState === "tool-select") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
+        <div className="max-w-2xl w-full">
+          <div className="text-center mb-12">
+            <h1 className="text-4xl font-light text-white mb-2">Welcome, {user?.name}</h1>
+            <p className="text-slate-400">Choose your writing tool</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Pre-Writing Ideation Card */}
+            <div
+              onClick={() => {
+                setSelectedTool("pre-writing")
+                setCurrentState("dashboard")
+              }}
+              className="group cursor-pointer"
+            >
+              <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-8 transition-all hover:bg-white/15 hover:border-white/30 h-full flex flex-col justify-between">
+                <div>
+                  <div className="h-16 w-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <Lightbulb className="h-8 w-8 text-white" />
+                  </div>
+                  <h2 className="text-2xl font-light text-white mb-3">Pre-Writing Ideation</h2>
+                  <p className="text-slate-300 leading-relaxed">
+                    Unlock creativity with strategy cards inspired by Oblique Strategies. Explore, refine, and organize
+                    your best ideas.
+                  </p>
+                </div>
+                <div className="mt-8 flex items-center text-amber-400 font-medium group-hover:translate-x-2 transition-transform">
+                  Get Started <ArrowRight className="h-4 w-4 ml-2" />
+                </div>
+              </div>
+            </div>
+
+            {/* Writing Coach Card */}
+            <div
+              onClick={() => {
+                setSelectedTool("writing-coach")
+                setCurrentState("dashboard")
+              }}
+              className="group cursor-pointer"
+            >
+              <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-8 transition-all hover:bg-white/15 hover:border-white/30 h-full flex flex-col justify-between">
+                <div>
+                  <div className="h-16 w-16 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <FileText className="h-8 w-8 text-white" />
+                  </div>
+                  <h2 className="text-2xl font-light text-white mb-3">Writing Coach</h2>
+                  <p className="text-slate-300 leading-relaxed">
+                    Structured writing practice with AI feedback. Break down complex tasks and track your progress with
+                    personalized coaching.
+                  </p>
+                </div>
+                <div className="mt-8 flex items-center text-blue-400 font-medium group-hover:translate-x-2 transition-transform">
+                  Get Started <ArrowRight className="h-4 w-4 ml-2" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-12 flex items-center justify-center">
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              className="border-slate-400 text-slate-300 hover:bg-slate-800 bg-transparent"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Dashboard view - route to appropriate tool
   if (currentState === "dashboard") {
+    if (selectedTool === "pre-writing") {
+      return (
+        <PreWritingIdeation
+          user={user}
+          onLogout={handleLogout}
+          onBack={() => {
+            setSelectedTool(null)
+            setCurrentState("tool-select")
+          }}
+        />
+      )
+    }
+
+    // Writing Coach dashboard
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-white border-b border-gray-200 px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center space-x-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedTool(null)
+                  setCurrentState("tool-select")
+                }}
+              >
+                <Home className="h-4 w-4 mr-2" />
+                Tool Select
+              </Button>
               <Home className="h-6 w-6 text-blue-600" />
               <h1 className="text-xl font-medium text-gray-800">Writing Coach Dashboard</h1>
               <span className="text-sm text-gray-600">Welcome, {user?.name}!</span>

@@ -1,5 +1,4 @@
 import { generateText } from "ai"
-import { google } from "@ai-sdk/google"
 import { type NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
@@ -11,7 +10,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { text } = await generateText({
-      model: google("gemini-2.0-flash-exp"),
+      model: "openai/gpt-4o-mini",
       prompt: prompt,
       temperature: 0.3, // Lower temperature for more consistent JSON
     })
