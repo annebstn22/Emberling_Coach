@@ -7,20 +7,25 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import ComparativeJudgment from "@/components/comparative-judgment"
+import IslandOfMisfits from "@/components/island-of-misfits"
+import FileUpload from "./file-upload"
 import {
   Lightbulb,
   Plus,
+  RotateCcw,
+  BookOpen,
+  Heart,
+  Trash2,
+  Archive,
   Home,
   LogOut,
-  RotateCcw,
-  Trash2,
-  Heart,
-  Archive,
-  Zap,
-  BookOpen,
   Paperclip,
+  Layout,
+  ChevronRight,
+  Trophy,
+  Zap,
 } from "lucide-react"
-import FileUpload from "./file-upload"
 
 interface UploadedFile {
   url: string
@@ -46,6 +51,14 @@ interface IdeaEntry {
   timestamp: Date
   status: "active" | "discarded" | "selected"
   attachedFiles?: UploadedFile[]
+  wins?: number // For comparative judgment
+  score?: number // For comparative judgment
+}
+
+interface User {
+  id: string
+  email: string
+  name: string
 }
 
 interface IdeationSession {
@@ -57,6 +70,7 @@ interface IdeationSession {
   timer: number
   isTimerRunning: boolean
   uploadedFiles: UploadedFile[]
+  isComplete?: boolean
 }
 
 const STRATEGY_CARDS: StrategyCard[] = [
@@ -96,11 +110,17 @@ export default function PreWritingIdeation({
   user,
   onLogout,
   onBack,
-}: { user: any; onLogout: () => void; onBack: () => void }) {
+}: {
+  user: User | null
+  onLogout: () => void
+  onBack: () => void
+}) {
   const [session, setSession] = useState<IdeationSession | null>(null)
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionDescription, setSessionDescription] = useState("")
-  const [currentView, setCurrentView] = useState<"setup" | "ideate" | "compare" | "review">("setup")
+  const [currentView, setCurrentView] = useState<
+    "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits"
+  >("dashboard")
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
   const [currentNotes, setCurrentNotes] = useState("")
@@ -108,6 +128,20 @@ export default function PreWritingIdeation({
   const [activeTab, setActiveTab] = useState("ideas")
   const [showFileUpload, setShowFileUpload] = useState(false)
   const [sessionUploadedFiles, setSessionUploadedFiles] = useState<UploadedFile[]>([])
+
+  const [allSessions, setAllSessions] = useState<IdeationSession[]>([])
+
+  useEffect(() => {
+    const savedSessions = localStorage.getItem("ideation-sessions")
+    if (savedSessions) {
+      setAllSessions(JSON.parse(savedSessions))
+    }
+  }, [])
+
+  const saveSessions = (sessions: IdeationSession[]) => {
+    localStorage.setItem("ideation-sessions", JSON.stringify(sessions))
+    setAllSessions(sessions)
+  }
 
   // Timer effect
   useEffect(() => {
@@ -139,6 +173,7 @@ export default function PreWritingIdeation({
       timer: timerDuration * 60,
       isTimerRunning: true,
       uploadedFiles: [],
+      isComplete: false,
     }
 
     setSession(newSession)
@@ -202,6 +237,36 @@ export default function PreWritingIdeation({
     }
   }
 
+  const completeSession = () => {
+    if (!session) return
+    const completedSession = { ...session, isComplete: true, isTimerRunning: false }
+    setSession(completedSession)
+    const existingSessions = allSessions.filter((s) => s.id !== session.id)
+    saveSessions([completedSession, ...existingSessions])
+  }
+
+  const handleRankingComplete = (rankedIdeas: IdeaEntry[]) => {
+    if (!session) return
+    setSession({ ...session, ideas: rankedIdeas })
+    setCurrentView("ranked")
+    completeSession()
+  }
+
+  const sendToMisfits = (idea: IdeaEntry) => {
+    const misfitIdeas = JSON.parse(localStorage.getItem("misfit-ideas") || "[]")
+    const misfitIdea = {
+      id: Date.now().toString(),
+      content: idea.content,
+      notes: idea.notes,
+      tags: [],
+      reasonDiscarded: "Sent from comparative judgment",
+      originalSessionTitle: session?.title,
+      discardedAt: new Date(),
+      attachedFiles: idea.attachedFiles,
+    }
+    localStorage.setItem("misfit-ideas", JSON.stringify([...misfitIdeas, misfitIdea]))
+  }
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
@@ -254,8 +319,151 @@ export default function PreWritingIdeation({
     }
   }
 
+  if (currentView === "dashboard") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="bg-white border-b border-orange-200 px-4 py-3">
+          <div className="max-w-6xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <Button variant="ghost" size="sm" onClick={onBack}>
+                <Home className="h-4 w-4 mr-2" />
+                Tool Select
+              </Button>
+              <h1 className="text-lg font-medium text-gray-800">Pre-Writing Ideation</h1>
+            </div>
+            <Button variant="outline" size="sm" onClick={onLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto p-6 space-y-6">
+          {/* New Session Card */}
+          <Card className="bg-gradient-to-r from-amber-500 to-orange-500 border-none text-white">
+            <CardContent className="p-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold mb-2">Start a New Ideation Session</h2>
+                  <p className="text-amber-100">
+                    Use strategy cards to unlock creative thinking and capture your best ideas
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setCurrentView("setup")}
+                  size="lg"
+                  className="bg-white text-amber-600 hover:bg-amber-50"
+                >
+                  <Plus className="h-5 w-5 mr-2" />
+                  New Session
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Island of Misfit Ideas Card */}
+          <Card
+            className="bg-gradient-to-r from-purple-100 to-pink-100 border-purple-200 cursor-pointer hover:shadow-lg transition-all"
+            onClick={() => setCurrentView("island-of-misfits")}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="h-12 w-12 bg-purple-500 rounded-lg flex items-center justify-center">
+                    <Archive className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-800">Island of Misfit Ideas</h3>
+                    <p className="text-sm text-gray-600">Browse discarded ideas for inspiration</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-6 w-6 text-gray-400" />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Past Sessions */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Layout className="h-5 w-5" />
+                <span>Your Ideation Sessions</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {allSessions.length === 0 ? (
+                <div className="text-center py-12">
+                  <Lightbulb className="h-12 w-12 text-amber-300 mx-auto mb-3" />
+                  <p className="text-gray-600">No sessions yet. Start your first ideation session!</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {allSessions.map((s) => (
+                    <Card
+                      key={s.id}
+                      className="hover:shadow-md transition-shadow cursor-pointer"
+                      onClick={() => {
+                        setSession(s)
+                        setCurrentView(s.isComplete ? "ranked" : "ideate")
+                      }}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2 mb-2">
+                              <h3 className="font-semibold text-gray-800">{s.title}</h3>
+                              <Badge variant={s.isComplete ? "default" : "outline"}>
+                                {s.isComplete ? "Complete" : "In Progress"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-2">{s.description}</p>
+                            <div className="flex items-center space-x-4 text-xs text-gray-500">
+                              <span>{s.ideas.length} ideas</span>
+                              <span>{new Date(s.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                          <ChevronRight className="h-5 w-5 text-gray-400" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  if (currentView === "island-of-misfits") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="bg-white border-b border-orange-200 px-4 py-3">
+          <div className="max-w-6xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <Button variant="ghost" size="sm" onClick={() => setCurrentView("dashboard")}>
+                <Home className="h-4 w-4 mr-2" />
+                Back to Dashboard
+              </Button>
+              <h1 className="text-lg font-medium text-gray-800">Island of Misfit Ideas</h1>
+            </div>
+          </div>
+        </div>
+        <div className="max-w-6xl mx-auto p-6">
+          <IslandOfMisfits
+            onMisfitImport={(idea) => {
+              // Could implement restoring to current session if needed
+              console.log("[v0] Restoring misfit idea:", idea)
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
   // Setup view
-  if (!session) {
+  if (!session && currentView === "setup") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
         <div className="bg-white border-b border-orange-200 px-4 py-3">
@@ -265,7 +473,7 @@ export default function PreWritingIdeation({
               <h1 className="text-xl font-medium text-gray-800">Pre-Writing Ideation</h1>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={onBack} variant="outline" size="sm">
+              <Button onClick={() => setCurrentView("dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
                 Back
               </Button>
@@ -361,7 +569,12 @@ export default function PreWritingIdeation({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setCurrentView("review")
+                  const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
+                  if (activeIdeas.length >= 2) {
+                    setCurrentView("compare")
+                  } else {
+                    alert("You need at least 2 active ideas to start ranking")
+                  }
                 }}
               >
                 Review Ideas
@@ -692,6 +905,193 @@ export default function PreWritingIdeation({
               )}
             </TabsContent>
           </Tabs>
+        </div>
+      </div>
+    )
+  }
+
+  if (currentView === "compare") {
+    const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="bg-white border-b border-orange-200 px-4 py-3">
+          <div className="max-w-6xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
+              <Badge className="bg-amber-500">
+                <Layout className="h-3 w-3 mr-1" />
+                Comparative Judgment
+              </Badge>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCurrentView("ideate")
+              }}
+            >
+              Back to Ideating
+            </Button>
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto p-6">
+          <ComparativeJudgment ideas={activeIdeas} onRankingComplete={handleRankingComplete} />
+        </div>
+      </div>
+    )
+  }
+
+  if (currentView === "ranked") {
+    const rankedIdeas = [...session.ideas].sort((a, b) => (b.score || 0) - (a.score || 0))
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="bg-white border-b border-orange-200 px-4 py-3">
+          <div className="max-w-6xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
+              <Badge className="bg-amber-500">
+                <Trophy className="h-3 w-3 mr-1" />
+                Ranked
+              </Badge>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button onClick={() => setCurrentView("dashboard")} variant="outline" size="sm">
+                <Home className="h-4 w-4 mr-2" />
+                Dashboard
+              </Button>
+              <Button
+                onClick={() => {
+                  setSession(null)
+                  setCurrentView("setup")
+                }}
+                variant="outline"
+                size="sm"
+              >
+                New Session
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-6xl mx-auto p-6">
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Trophy className="h-5 w-5 text-amber-600" />
+                <span>Your Ideas Ranked</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {rankedIdeas.map((idea, idx) => (
+                  <Card
+                    key={idea.id}
+                    className={`${
+                      idx === 0
+                        ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400"
+                        : idx === 1
+                          ? "bg-gray-50 border-gray-300"
+                          : idx === 2
+                            ? "bg-orange-50 border-orange-300"
+                            : "bg-white border-gray-200"
+                    }`}
+                  >
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center space-x-4 flex-1">
+                          <div
+                            className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full ${
+                              idx === 0
+                                ? "bg-amber-500 text-white"
+                                : idx === 1
+                                  ? "bg-gray-400 text-white"
+                                  : idx === 2
+                                    ? "bg-orange-400 text-white"
+                                    : "bg-gray-300 text-white"
+                            }`}
+                          >
+                            {idx + 1}
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-800 mb-1">{idea.content}</p>
+                            {idea.notes && <p className="text-sm text-gray-600 italic">"{idea.notes}"</p>}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant="outline">{idea.wins || 0} wins</Badge>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              sendToMisfits(idea)
+                              setSession({
+                                ...session,
+                                ideas: session.ideas.filter((i) => i.id !== idea.id),
+                              })
+                            }}
+                            className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-300"
+                          >
+                            <Archive className="h-4 w-4 mr-1" />
+                            Send to Misfits
+                          </Button>
+                        </div>
+                      </div>
+
+                      {idea.attachedFiles && idea.attachedFiles.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <p className="text-xs font-medium text-gray-600 mb-2">Attached files:</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {idea.attachedFiles.map((file) => {
+                              const isImage = file.type.startsWith("image/")
+                              const isVideo = file.type.startsWith("video/")
+                              const isAudio = file.type.startsWith("audio/")
+
+                              return (
+                                <div key={file.url} className="border border-gray-200 rounded p-2">
+                                  {isImage && (
+                                    <img
+                                      src={file.url || "/placeholder.svg"}
+                                      alt={file.name}
+                                      className="w-full h-32 object-cover rounded"
+                                    />
+                                  )}
+                                  {isVideo && (
+                                    <video src={file.url} controls className="w-full h-32 rounded">
+                                      Your browser does not support video.
+                                    </video>
+                                  )}
+                                  {isAudio && (
+                                    <div className="bg-gray-50 p-4 rounded">
+                                      <audio src={file.url} controls className="w-full">
+                                        Your browser does not support audio.
+                                      </audio>
+                                    </div>
+                                  )}
+                                  {!isImage && !isVideo && !isAudio && (
+                                    <a
+                                      href={file.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-blue-600 hover:underline"
+                                    >
+                                      {file.name}
+                                    </a>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     )

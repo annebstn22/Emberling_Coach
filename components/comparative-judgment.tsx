@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ChevronLeft, ChevronRight, BarChart3, Trophy } from "lucide-react"
+import { ChevronLeft, ChevronRight, Award } from "lucide-react"
 
 interface IdeaEntry {
   id: string
@@ -16,26 +16,35 @@ interface IdeaEntry {
   wins?: number
 }
 
-interface RankingState {
-  totalComparisons: number
-  ideaAWins: number
-  ideaBWins: number
-}
-
 export default function ComparativeJudgment({
   ideas,
   onRankingComplete,
-}: { ideas: IdeaEntry[]; onRankingComplete: (rankedIdeas: IdeaEntry[]) => void }) {
-  const [currentIdeas, setCurrentIdeas] = useState<IdeaEntry[]>(
-    ideas.map((idea, idx) => ({ ...idea, score: 0, wins: 0 })),
-  )
-  const [pairIndex, setPairIndex] = useState(0)
-  const [rankingStats, setRankingStats] = useState<RankingState>({
-    totalComparisons: 0,
-    ideaAWins: 0,
-    ideaBWins: 0,
+}: {
+  ideas: IdeaEntry[]
+  onRankingComplete: (rankedIdeas: IdeaEntry[]) => void
+}) {
+  const [comparisons, setComparisons] = useState<Array<[number, number]>>(() => {
+    const pairs: Array<[number, number]> = []
+    for (let i = 0; i < ideas.length; i++) {
+      for (let j = i + 1; j < ideas.length; j++) {
+        pairs.push([i, j])
+      }
+    }
+    // Shuffle pairs for variety
+    return pairs.sort(() => Math.random() - 0.5)
   })
+
+  const [currentIdeas, setCurrentIdeas] = useState<IdeaEntry[]>(ideas.map((idea) => ({ ...idea, score: 0, wins: 0 })))
+  const [currentComparisonIndex, setCurrentComparisonIndex] = useState(0)
   const [isComplete, setIsComplete] = useState(false)
+
+  useEffect(() => {
+    if (currentComparisonIndex >= comparisons.length && !isComplete) {
+      setIsComplete(true)
+      const rankedIdeas = [...currentIdeas].sort((a, b) => (b.score || 0) - (a.score || 0))
+      onRankingComplete(rankedIdeas)
+    }
+  }, [currentComparisonIndex, comparisons.length, currentIdeas, isComplete, onRankingComplete])
 
   if (ideas.length < 2) {
     return (
@@ -47,31 +56,24 @@ export default function ComparativeJudgment({
     )
   }
 
-  const getCurrentPair = () => {
-    if (pairIndex >= currentIdeas.length * currentIdeas.length) {
-      return null
-    }
-    const ideaAIdx = Math.floor(pairIndex / currentIdeas.length)
-    const ideaBIdx = pairIndex % currentIdeas.length
-    if (ideaAIdx === ideaBIdx || ideaAIdx >= currentIdeas.length || ideaBIdx >= currentIdeas.length) {
-      return null
-    }
-    return {
-      ideaA: currentIdeas[ideaAIdx],
-      ideaB: currentIdeas[ideaBIdx],
-      indexA: ideaAIdx,
-      indexB: ideaBIdx,
-    }
+  if (isComplete || currentComparisonIndex >= comparisons.length) {
+    return (
+      <Card className="text-center py-8">
+        <CardContent>
+          <Award className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+          <p className="text-lg font-medium text-gray-800 mb-2">Ranking Complete!</p>
+          <p className="text-gray-600">Your ideas have been ranked based on your comparisons.</p>
+        </CardContent>
+      </Card>
+    )
   }
 
-  const selectWinner = (winnerIdx: "a" | "b") => {
-    const pair = getCurrentPair()
-    if (!pair) return
+  const [indexA, indexB] = comparisons[currentComparisonIndex]
+  const ideaA = currentIdeas[indexA]
+  const ideaB = currentIdeas[indexB]
 
+  const selectWinner = (winnerIndex: number) => {
     const updatedIdeas = [...currentIdeas]
-    const winnerIndex = winnerIdx === "a" ? pair.indexA : pair.indexB
-    const loserIndex = winnerIdx === "a" ? pair.indexB : pair.indexA
-
     updatedIdeas[winnerIndex] = {
       ...updatedIdeas[winnerIndex],
       score: (updatedIdeas[winnerIndex].score || 0) + 1,
@@ -79,120 +81,47 @@ export default function ComparativeJudgment({
     }
 
     setCurrentIdeas(updatedIdeas)
-    setRankingStats({
-      totalComparisons: rankingStats.totalComparisons + 1,
-      ideaAWins: winnerIdx === "a" ? rankingStats.ideaAWins + 1 : rankingStats.ideaAWins,
-      ideaBWins: winnerIdx === "b" ? rankingStats.ideaBWins + 1 : rankingStats.ideaBWins,
-    })
+    setCurrentComparisonIndex(currentComparisonIndex + 1)
+  }
 
-    const nextPairIndex = pairIndex + 1
-    if (nextPairIndex >= currentIdeas.length * currentIdeas.length) {
-      setIsComplete(true)
-      onRankingComplete(updatedIdeas)
-    } else {
-      setPairIndex(nextPairIndex)
+  const progress = ((currentComparisonIndex + 1) / comparisons.length) * 100
+
+  const renderFilePreview = (file: any) => {
+    const isImage = file.type.startsWith("image/")
+    const isVideo = file.type.startsWith("video/")
+    const isAudio = file.type.startsWith("audio/")
+
+    if (isImage) {
+      return (
+        <img
+          src={file.url || "/placeholder.svg"}
+          alt={file.name}
+          className="w-full h-48 object-cover rounded-lg mb-3"
+        />
+      )
     }
-  }
-
-  if (isComplete) {
-    const rankedIdeas = [...currentIdeas].sort((a, b) => (b.score || 0) - (a.score || 0))
-
+    if (isVideo) {
+      return (
+        <video src={file.url} controls className="w-full h-48 rounded-lg mb-3">
+          Your browser does not support video.
+        </video>
+      )
+    }
+    if (isAudio) {
+      return (
+        <div className="bg-gray-100 p-4 rounded-lg mb-3">
+          <audio src={file.url} controls className="w-full">
+            Your browser does not support audio.
+          </audio>
+        </div>
+      )
+    }
     return (
-      <div className="space-y-6">
-        <Card className="bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Trophy className="h-5 w-5 text-amber-600" />
-              <span>Ranking Complete!</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-800">{rankingStats.totalComparisons}</div>
-                <div className="text-xs text-gray-600">Comparisons Made</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-amber-600">{rankedIdeas[0]?.wins || 0}</div>
-                <div className="text-xs text-gray-600">Top Idea Wins</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-gray-800">{rankedIdeas.length}</div>
-                <div className="text-xs text-gray-600">Ideas Ranked</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <BarChart3 className="h-5 w-5" />
-              <span>Ideas Ranked by Quality</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {rankedIdeas.map((idea, idx) => (
-                <div
-                  key={idea.id}
-                  className={`border rounded-lg p-4 ${
-                    idx === 0
-                      ? "bg-amber-50 border-amber-200 ring-2 ring-amber-300"
-                      : idx === 1
-                        ? "bg-gray-50 border-gray-200"
-                        : idx === 2
-                          ? "bg-orange-50 border-orange-200"
-                          : "bg-white border-gray-200"
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center space-x-3">
-                      <div className="text-center">
-                        <div
-                          className={`text-lg font-bold w-8 h-8 flex items-center justify-center rounded-full ${
-                            idx === 0
-                              ? "bg-amber-400 text-white"
-                              : idx === 1
-                                ? "bg-gray-400 text-white"
-                                : idx === 2
-                                  ? "bg-orange-400 text-white"
-                                  : "bg-gray-300 text-white"
-                          }`}
-                        >
-                          {idx + 1}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-800">{idea.content}</p>
-                        {idea.notes && <p className="text-xs text-gray-600 mt-1">"{idea.notes}"</p>}
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="ml-2">
-                      {idea.wins} wins
-                    </Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
+        📎 {file.name}
+      </a>
     )
   }
-
-  const pair = getCurrentPair()
-  if (!pair) {
-    return (
-      <Card className="text-center py-8">
-        <CardContent>
-          <p className="text-gray-600">No more comparisons needed.</p>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const progress = ((pairIndex + 1) / (currentIdeas.length * currentIdeas.length)) * 100
 
   return (
     <div className="space-y-6">
@@ -201,11 +130,12 @@ export default function ComparativeJudgment({
           <CardTitle className="flex items-center justify-between">
             <span>Compare Ideas</span>
             <Badge variant="outline">
-              {Math.min(pairIndex + 1, currentIdeas.length * currentIdeas.length)} /{" "}
-              {currentIdeas.length * currentIdeas.length}
+              {currentComparisonIndex + 1} / {comparisons.length}
             </Badge>
           </CardTitle>
-          <p className="text-sm text-gray-600 mt-2">Which idea resonates more with you?</p>
+          <p className="text-sm text-gray-600 mt-2">
+            Which idea resonates more with you? Click to choose the stronger one.
+          </p>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="w-full bg-gray-200 rounded-full h-2">
@@ -214,23 +144,16 @@ export default function ComparativeJudgment({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Idea A */}
-            <button
-              onClick={() => selectWinner("a")}
-              className="text-left transition-all hover:scale-105 active:scale-95"
-            >
-              <Card
-                className={`cursor-pointer transition-all border-2 hover:border-amber-400 ${
-                  rankingStats.ideaAWins > rankingStats.ideaBWins
-                    ? "border-amber-200 bg-amber-50"
-                    : "border-gray-200 hover:bg-gray-50"
-                }`}
-              >
+            <button onClick={() => selectWinner(indexA)} className="text-left transition-all hover:scale-105">
+              <Card className="cursor-pointer transition-all border-2 hover:border-amber-400 border-gray-200 hover:bg-gray-50 h-full">
                 <CardContent className="p-6">
-                  <p className="text-lg font-medium text-gray-800 mb-3">{pair.ideaA.content}</p>
-                  {pair.ideaA.notes && <p className="text-sm text-gray-600 italic mb-3">"{pair.ideaA.notes}"</p>}
-                  {pair.ideaA.attachedFiles && pair.ideaA.attachedFiles.length > 0 && (
-                    <div className="text-xs text-gray-500 mb-3">{pair.ideaA.attachedFiles.length} file(s) attached</div>
+                  {ideaA.attachedFiles && ideaA.attachedFiles.length > 0 && (
+                    <div className="mb-3">{renderFilePreview(ideaA.attachedFiles[0])}</div>
                   )}
+
+                  <p className="text-lg font-medium text-gray-800 mb-3">{ideaA.content}</p>
+                  {ideaA.notes && <p className="text-sm text-gray-600 italic mb-3">"{ideaA.notes}"</p>}
+
                   <div className="flex items-center justify-between pt-3 border-t border-gray-200">
                     <span className="text-xs text-gray-600">Choose this idea</span>
                     <ChevronRight className="h-4 w-4 text-amber-600" />
@@ -240,23 +163,16 @@ export default function ComparativeJudgment({
             </button>
 
             {/* Idea B */}
-            <button
-              onClick={() => selectWinner("b")}
-              className="text-left transition-all hover:scale-105 active:scale-95"
-            >
-              <Card
-                className={`cursor-pointer transition-all border-2 hover:border-amber-400 ${
-                  rankingStats.ideaBWins > rankingStats.ideaAWins
-                    ? "border-amber-200 bg-amber-50"
-                    : "border-gray-200 hover:bg-gray-50"
-                }`}
-              >
+            <button onClick={() => selectWinner(indexB)} className="text-left transition-all hover:scale-105">
+              <Card className="cursor-pointer transition-all border-2 hover:border-amber-400 border-gray-200 hover:bg-gray-50 h-full">
                 <CardContent className="p-6">
-                  <p className="text-lg font-medium text-gray-800 mb-3">{pair.ideaB.content}</p>
-                  {pair.ideaB.notes && <p className="text-sm text-gray-600 italic mb-3">"{pair.ideaB.notes}"</p>}
-                  {pair.ideaB.attachedFiles && pair.ideaB.attachedFiles.length > 0 && (
-                    <div className="text-xs text-gray-500 mb-3">{pair.ideaB.attachedFiles.length} file(s) attached</div>
+                  {ideaB.attachedFiles && ideaB.attachedFiles.length > 0 && (
+                    <div className="mb-3">{renderFilePreview(ideaB.attachedFiles[0])}</div>
                   )}
+
+                  <p className="text-lg font-medium text-gray-800 mb-3">{ideaB.content}</p>
+                  {ideaB.notes && <p className="text-sm text-gray-600 italic mb-3">"{ideaB.notes}"</p>}
+
                   <div className="flex items-center justify-between pt-3 border-t border-gray-200">
                     <ChevronLeft className="h-4 w-4 text-amber-600" />
                     <span className="text-xs text-gray-600">Choose this idea</span>
@@ -271,8 +187,8 @@ export default function ComparativeJudgment({
       <Card className="bg-blue-50 border-blue-200">
         <CardContent className="p-4">
           <p className="text-sm text-blue-800">
-            This comparative judgment method helps surface your best ideas by comparing them directly. The more
-            comparisons you make, the more accurate your ranking becomes.
+            <strong>Comparative judgment</strong> helps you identify your strongest ideas by making direct comparisons.
+            Research shows this method produces more reliable rankings than rating each idea individually.
           </p>
         </CardContent>
       </Card>
