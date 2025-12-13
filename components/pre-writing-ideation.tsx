@@ -1,31 +1,34 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
+import type { User } from "@supabase/supabase-js"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import ComparativeJudgment from "@/components/comparative-judgment"
-import IslandOfMisfits from "@/components/island-of-misfits"
-import FileUpload from "./file-upload"
 import {
   Lightbulb,
   Plus,
+  Zap,
+  Sparkles,
+  LogOut,
+  Home,
+  Archive,
+  Trophy,
+  ChevronRight,
+  Layout,
+  Paperclip,
   RotateCcw,
   BookOpen,
-  Heart,
   Trash2,
-  Archive,
-  Home,
-  LogOut,
-  Paperclip,
-  Layout,
-  ChevronRight,
-  Trophy,
-  Zap,
+  Heart,
+  Award,
 } from "lucide-react"
+import FileUpload from "./file-upload"
+import ComparativeJudgment from "./comparative-judgment"
+import IslandOfMisfits from "./island-of-misfits"
 
 interface UploadedFile {
   url: string
@@ -53,9 +56,10 @@ interface IdeaEntry {
   attachedFiles?: UploadedFile[]
   wins?: number // For comparative judgment
   score?: number // For comparative judgment
+  thurstoneScore?: number // Added Thurstone Case V score
 }
 
-interface User {
+interface UserLocal {
   id: string
   email: string
   name: string
@@ -119,7 +123,7 @@ export default function PreWritingIdeation({
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionDescription, setSessionDescription] = useState("")
   const [currentView, setCurrentView] = useState<
-    "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits"
+    "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review"
   >("dashboard")
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
@@ -237,19 +241,31 @@ export default function PreWritingIdeation({
     }
   }
 
-  const completeSession = () => {
-    if (!session) return
-    const completedSession = { ...session, isComplete: true, isTimerRunning: false }
+  const completeSession = (sessionToComplete?: IdeationSession) => {
+    const sessionToSave = sessionToComplete || session
+    if (!sessionToSave) return
+    const completedSession = { ...sessionToSave, isComplete: true, isTimerRunning: false }
     setSession(completedSession)
-    const existingSessions = allSessions.filter((s) => s.id !== session.id)
+    const existingSessions = allSessions.filter((s) => s.id !== sessionToSave.id)
     saveSessions([completedSession, ...existingSessions])
   }
 
   const handleRankingComplete = (rankedIdeas: IdeaEntry[]) => {
     if (!session) return
-    setSession({ ...session, ideas: rankedIdeas })
+
+    console.log(
+      "[v0] Ranking complete, received ideas:",
+      rankedIdeas.map((i) => ({
+        content: i.content,
+        wins: i.wins,
+        thurstoneScore: i.thurstoneScore,
+      })),
+    )
+
+    const updatedSession = { ...session, ideas: rankedIdeas }
+    setSession(updatedSession)
     setCurrentView("ranked")
-    completeSession()
+    completeSession(updatedSession)
   }
 
   const sendToMisfits = (idea: IdeaEntry) => {
@@ -944,7 +960,16 @@ export default function PreWritingIdeation({
   }
 
   if (currentView === "ranked") {
-    const rankedIdeas = [...session.ideas].sort((a, b) => (b.score || 0) - (a.score || 0))
+    const rankedIdeas = [...session.ideas].sort((a, b) => (b.thurstoneScore || 0) - (a.thurstoneScore || 0))
+
+    console.log(
+      "[v0] Rendering ranked view:",
+      rankedIdeas.map((i) => ({
+        content: i.content,
+        wins: i.wins,
+        thurstoneScore: i.thurstoneScore,
+      })),
+    )
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -983,6 +1008,10 @@ export default function PreWritingIdeation({
                 <Trophy className="h-5 w-5 text-amber-600" />
                 <span>Your Ideas Ranked</span>
               </CardTitle>
+              <p className="text-sm text-gray-600 mt-2">
+                Ranked using Thurstone's Law of Comparative Judgment (Case V) - a statistical model that produces
+                interval-scaled scores from pairwise comparisons.
+              </p>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -993,50 +1022,59 @@ export default function PreWritingIdeation({
                       idx === 0
                         ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400"
                         : idx === 1
-                          ? "bg-gray-50 border-gray-300"
+                          ? "bg-orange-50 border-orange-200"
                           : idx === 2
-                            ? "bg-orange-50 border-orange-300"
-                            : "bg-white border-gray-200"
+                            ? "bg-yellow-50 border-yellow-200"
+                            : "bg-white"
                     }`}
                   >
                     <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center space-x-4 flex-1">
-                          <div
-                            className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full ${
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center space-x-3">
+                          <Badge
+                            variant="outline"
+                            className={`text-lg font-bold ${
                               idx === 0
-                                ? "bg-amber-500 text-white"
+                                ? "bg-amber-500 text-white border-amber-600"
                                 : idx === 1
-                                  ? "bg-gray-400 text-white"
+                                  ? "bg-orange-400 text-white border-orange-500"
                                   : idx === 2
-                                    ? "bg-orange-400 text-white"
-                                    : "bg-gray-300 text-white"
+                                    ? "bg-yellow-400 text-white border-yellow-500"
+                                    : "bg-gray-200 text-gray-700"
                             }`}
                           >
-                            {idx + 1}
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-medium text-gray-800 mb-1">{idea.content}</p>
-                            {idea.notes && <p className="text-sm text-gray-600 italic">"{idea.notes}"</p>}
-                          </div>
+                            #{idx + 1}
+                          </Badge>
+                          {idx < 3 && (
+                            <Award
+                              className={`h-5 w-5 ${
+                                idx === 0 ? "text-amber-500" : idx === 1 ? "text-orange-400" : "text-yellow-500"
+                              }`}
+                            />
+                          )}
+                        </div>
+                        <Button
+                          onClick={() => sendToMisfits(idea)}
+                          variant="outline"
+                          size="sm"
+                          className="text-purple-600 hover:bg-purple-50"
+                        >
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Send to Island of Misfits
+                        </Button>
+                      </div>
+
+                      <p className="text-lg font-medium text-gray-800 mb-2">{idea.content}</p>
+                      {idea.notes && <p className="text-sm text-gray-600 italic mb-3">"{idea.notes}"</p>}
+
+                      <div className="flex items-center space-x-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-medium">μ (Thurstone score):</span>
+                          <Badge variant="secondary">{idea.thurstoneScore?.toFixed(3) || "0.000"}</Badge>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <Badge variant="outline">{idea.wins || 0} wins</Badge>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              sendToMisfits(idea)
-                              setSession({
-                                ...session,
-                                ideas: session.ideas.filter((i) => i.id !== idea.id),
-                              })
-                            }}
-                            className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-300"
-                          >
-                            <Archive className="h-4 w-4 mr-1" />
-                            Send to Misfits
-                          </Button>
+                          <span className="font-medium">Wins:</span>
+                          <Badge variant="outline">{idea.wins || 0}</Badge>
                         </div>
                       </div>
 
