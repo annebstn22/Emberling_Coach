@@ -129,6 +129,8 @@ export default function WritingCoachApp() {
     lastKeystroke: Date.now(),
   })
 
+  const [isChunking, setIsChunking] = useState(false)
+
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
 
@@ -1005,104 +1007,63 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
   }
 
   const breakTaskIntoChunks = async (task: Task, desiredDuration: number) => {
-    // If desired duration is same or more than suggested, just update duration
+    // Safety check: don't chunk if desired duration is same or more than suggested
     if (desiredDuration >= task.suggestedDuration) {
       return [{ ...task, duration: desiredDuration }]
     }
 
-    // Calculate fallback chunks first (so we always have something to return)
     const numChunks = Math.ceil(task.suggestedDuration / desiredDuration)
-    const fallbackChunks = Array.from({ length: numChunks }, (_, index) => ({
-      ...task,
-      id: `${task.id}_chunk_${index + 1}`,
-      title: `${task.title} - Part ${index + 1} of ${numChunks}`,
-      description: `${task.description}
+    const lastChunkDuration = task.suggestedDuration - (numChunks - 1) * desiredDuration
 
-**Part ${index + 1} of ${numChunks}** (${desiredDuration} minutes)
-Focus on this section for this work session. You'll tackle the other parts separately.`,
-      duration: desiredDuration,
-      suggestedDuration: desiredDuration,
-      isSubtask: true,
-      parentTaskId: task.id,
-      completed: false,
-      needsImprovement: false,
-      attempts: 0,
-    }))
+    console.log(`[v0] Breaking task into ${numChunks} chunks of ${desiredDuration} minutes each`)
 
-    // Try AI-powered chunking
     try {
-      const prompt = `You are a writing coach. Break this task into ${numChunks} smaller chunks of ${desiredDuration} minutes each.
-
-CRITICAL: Respond with ONLY valid JSON. No explanations, no markdown, just the JSON object.
-
-Task to break down:
-- Title: ${task.title}
-- Description: ${task.description}
-- Focus: ${task.focus}
-- Original duration: ${task.suggestedDuration} minutes
-- Target chunk size: ${desiredDuration} minutes
-
-Return EXACTLY this JSON structure (no markdown, no additional text):
-{
-  "subtasks": [
-    {
-      "id": "subtask_1",
-      "title": "Part 1: [specific focus]",
-      "description": "[Specific instructions for this ${desiredDuration}-minute chunk]",
-      "focus": "${task.focus}",
-      "duration": ${desiredDuration}
-    }
-  ]
-}
-
-Make each chunk have unique, actionable instructions.`
-
-      const response = await fetch("/api/generate-tasks", {
+      const response = await fetch("/api/break-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          task: {
+            title: task.title,
+            description: task.description,
+            focus: task.focus,
+            suggestedDuration: task.suggestedDuration,
+          },
+          numChunks,
+          chunkDuration: desiredDuration,
+        }),
       })
 
-      if (response.ok) {
-        const data = await response.json()
-
-        // Check if there's an error in the response
-        if (data.error) {
-          console.error("API returned error:", data.error)
-          return fallbackChunks
-        }
-
-        const { text } = data
-        let cleanedText = text.trim()
-
-        // Try to find the JSON object
-        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
-        if (jsonMatch) {
-          cleanedText = jsonMatch[0]
-        }
-
-        const result = JSON.parse(cleanedText)
-
-        if (result.subtasks && Array.isArray(result.subtasks) && result.subtasks.length > 0) {
-          return result.subtasks.map((subtask: any, index: number) => ({
-            ...subtask,
-            id: `${task.id}_chunk_${index + 1}`,
-            suggestedDuration: subtask.duration || desiredDuration,
-            isSubtask: true,
-            parentTaskId: task.id,
-            completed: false,
-            needsImprovement: false,
-            attempts: 0,
-          }))
-        }
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to break task")
       }
-    } catch (error) {
-      console.error("AI chunking failed, using fallback:", error)
-    }
 
-    // Always return fallback chunks if AI fails
-    console.log(`Using fallback: Creating ${numChunks} chunks of ${desiredDuration} minutes each`)
-    return fallbackChunks
+      const data = await response.json()
+
+      if (!data.subtasks || !Array.isArray(data.subtasks)) {
+        throw new Error("Invalid response structure")
+      }
+
+      console.log(`[v0] Successfully generated ${data.subtasks.length} distinct subtasks`)
+
+      // Map AI-generated subtasks to our Task structure
+      return data.subtasks.map((subtask: any, index: number) => ({
+        id: `${task.id}_chunk_${index + 1}`,
+        title: subtask.title,
+        description: subtask.description,
+        focus: subtask.focus || task.focus,
+        duration: index === data.subtasks.length - 1 ? lastChunkDuration : desiredDuration,
+        suggestedDuration: index === data.subtasks.length - 1 ? lastChunkDuration : desiredDuration,
+        isSubtask: true,
+        parentTaskId: task.id,
+        completed: false,
+        needsImprovement: false,
+        attempts: 0,
+      }))
+    } catch (error) {
+      console.error("[v0] Error breaking task into chunks:", error)
+      throw error // Re-throw to handle in updateTaskDuration
+    }
   }
 
   const updateTaskDuration = async () => {
@@ -1110,9 +1071,21 @@ Make each chunk have unique, actionable instructions.`
 
     const newDuration = customDuration[0]
 
-    if (newDuration < currentTask.suggestedDuration) {
-      // Break task into chunks
+    // Simple duration update if increasing duration
+    if (newDuration >= currentTask.suggestedDuration) {
+      const updatedProject = { ...currentProject }
+      updatedProject.tasks[currentProject.currentTaskIndex].duration = newDuration
+      setCurrentProject(updatedProject)
+      setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+      setTimeRemaining(newDuration * 60)
+      return
+    }
+
+    // Break task into chunks
+    setIsChunking(true)
+    try {
       const chunks = await breakTaskIntoChunks(currentTask, newDuration)
+
       if (chunks.length > 1) {
         const updatedProject = { ...currentProject }
         // Replace current task with chunks
@@ -1120,16 +1093,20 @@ Make each chunk have unique, actionable instructions.`
         setCurrentProject(updatedProject)
         setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
         startCurrentTask(updatedProject)
-        return
+      } else {
+        // Single chunk, just update duration
+        const updatedProject = { ...currentProject }
+        updatedProject.tasks[currentProject.currentTaskIndex].duration = newDuration
+        setCurrentProject(updatedProject)
+        setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+        setTimeRemaining(newDuration * 60)
       }
+    } catch (error) {
+      console.error("[v0] Failed to break task:", error)
+      alert("Failed to break task into chunks. Please try again.")
+    } finally {
+      setIsChunking(false)
     }
-
-    // Simple duration update
-    const updatedProject = { ...currentProject }
-    updatedProject.tasks[currentProject.currentTaskIndex].duration = newDuration
-    setCurrentProject(updatedProject)
-    setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-    setTimeRemaining(newDuration * 60)
   }
 
   const formatTime = (seconds: number) => {
@@ -1980,12 +1957,20 @@ Make each chunk have unique, actionable instructions.`
                           size="sm"
                           variant="outline"
                           className="w-full bg-transparent"
+                          disabled={isChunking}
                         >
-                          {customDuration[0] < (currentTask?.suggestedDuration || 20)
-                            ? "Break into Smaller Chunks"
-                            : "Update Duration"}
+                          {isChunking ? (
+                            <>
+                              <span className="mr-2">⏳</span>
+                              Breaking down task...
+                            </>
+                          ) : customDuration[0] < (currentTask?.suggestedDuration || 20) ? (
+                            "Break into Smaller Chunks"
+                          ) : (
+                            "Update Duration"
+                          )}
                         </Button>
-                        {customDuration[0] < (currentTask?.suggestedDuration || 20) && (
+                        {customDuration[0] < (currentTask?.suggestedDuration || 20) && !isChunking && (
                           <p className="text-xs text-gray-600">
                             This will break the task into{" "}
                             {Math.ceil((currentTask?.suggestedDuration || 20) / customDuration[0])} smaller chunks
