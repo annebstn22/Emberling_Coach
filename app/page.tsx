@@ -138,6 +138,23 @@ export default function WritingCoachApp() {
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
 
+  // Save navigation state to localStorage when it changes
+  useEffect(() => {
+    if (user && currentState !== "auth") {
+      localStorage.setItem("app-navigation-state", currentState)
+    } else {
+      localStorage.removeItem("app-navigation-state")
+    }
+  }, [currentState, user])
+
+  useEffect(() => {
+    if (user && selectedTool) {
+      localStorage.setItem("app-selected-tool", selectedTool)
+    } else {
+      localStorage.removeItem("app-selected-tool")
+    }
+  }, [selectedTool, user])
+
   // Load user session and projects from Supabase on mount
   useEffect(() => {
     const loadSessionAndProjects = async () => {
@@ -146,8 +163,29 @@ export default function WritingCoachApp() {
       } = await supabase.auth.getSession()
       if (session?.user) {
         setUser(session.user)
-        setCurrentState("tool-select")
+        
+        // Restore navigation state ONLY after confirming user is authenticated
+        const savedState = localStorage.getItem("app-navigation-state")
+        const savedTool = localStorage.getItem("app-selected-tool")
+        
+        if (savedState && savedState !== "auth") {
+          setCurrentState(savedState as any)
+        } else {
+          setCurrentState("tool-select")
+        }
+        
+        if (savedTool) {
+          setSelectedTool(savedTool as any)
+        }
+        
         await loadProjectsFromSupabase(session.user.id)
+      } else {
+        // No session, clear everything
+        setUser(null)
+        setCurrentState("auth")
+        setSelectedTool(null)
+        localStorage.removeItem("app-navigation-state")
+        localStorage.removeItem("app-selected-tool")
       }
     }
 
@@ -159,7 +197,20 @@ export default function WritingCoachApp() {
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
         setUser(session.user)
-        setCurrentState("tool-select")
+        
+        // Restore navigation state ONLY after confirming user is authenticated
+        const savedState = localStorage.getItem("app-navigation-state")
+        const savedTool = localStorage.getItem("app-selected-tool")
+        
+        if (savedState && savedState !== "auth") {
+          setCurrentState(savedState as any)
+        } else {
+          setCurrentState("tool-select")
+        }
+        
+        if (savedTool) {
+          setSelectedTool(savedTool as any)
+        }
         
         // Check if migration is needed (localStorage has data but Supabase doesn't)
         const hasLocalStorageData =
@@ -190,8 +241,12 @@ export default function WritingCoachApp() {
       } else {
         setUser(null)
         setCurrentState("auth")
+        setSelectedTool(null)
         setProjects([])
         setCurrentProject(null)
+        // Clear navigation state on logout
+        localStorage.removeItem("app-navigation-state")
+        localStorage.removeItem("app-selected-tool")
       }
     })
 
@@ -571,6 +626,10 @@ export default function WritingCoachApp() {
       setName("")
       setAuthError("")
       setResetEmailSent(false)
+      
+      // Clear navigation state from localStorage
+      localStorage.removeItem("app-navigation-state")
+      localStorage.removeItem("app-selected-tool")
     } catch (error) {
       console.error("Error during logout:", error)
     }

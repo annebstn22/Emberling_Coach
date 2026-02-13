@@ -123,9 +123,16 @@ export default function PreWritingIdeation({
   const [session, setSession] = useState<IdeationSession | null>(null)
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionDescription, setSessionDescription] = useState("")
+  // Load saved view from localStorage on mount
   const [currentView, setCurrentView] = useState<
     "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review"
-  >("dashboard")
+  >(() => {
+    if (typeof window !== "undefined") {
+      const savedView = localStorage.getItem("ideation-current-view")
+      return (savedView as any) || "dashboard"
+    }
+    return "dashboard"
+  })
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
   const [currentNotes, setCurrentNotes] = useState("")
@@ -201,6 +208,13 @@ export default function PreWritingIdeation({
       console.error("Error loading sessions:", error)
     }
   }
+
+  // Save current view to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ideation-current-view", currentView)
+    }
+  }, [currentView])
 
   useEffect(() => {
     if (user?.id) {

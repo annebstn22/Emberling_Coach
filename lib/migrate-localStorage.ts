@@ -49,12 +49,15 @@ export async function migrateProjects(userId: string): Promise<number> {
 
     for (const project of projects) {
       try {
+        // Convert old timestamp-based IDs to UUIDs if needed
+        const projectId = /^\d+$/.test(project.id) ? crypto.randomUUID() : project.id
+        
         // Upsert project
         const { error: projectError } = await supabase
           .from("projects")
           .upsert(
             {
-              id: project.id,
+              id: projectId,
               user_id: userId,
               name: project.name,
               description: project.description,
@@ -74,14 +77,16 @@ export async function migrateProjects(userId: string): Promise<number> {
         }
 
         // Delete existing tasks
-        await supabase.from("tasks").delete().eq("project_id", project.id)
+        await supabase.from("tasks").delete().eq("project_id", projectId)
 
         // Insert tasks
         if (project.tasks && project.tasks.length > 0) {
           const tasksToInsert = project.tasks.flatMap((task) => {
+            // Convert old timestamp-based IDs to UUIDs if needed
+            const taskId = /^\d+$/.test(task.id) ? crypto.randomUUID() : task.id
             const baseTask = {
-              id: task.id,
-              project_id: project.id,
+              id: taskId,
+              project_id: projectId,
               title: task.title,
               description: task.description,
               focus: task.focus,
@@ -102,9 +107,11 @@ export async function migrateProjects(userId: string): Promise<number> {
             const allTasks = [baseTask]
             if (task.subtasks && task.subtasks.length > 0) {
               task.subtasks.forEach((subtask: any) => {
+                // Convert old timestamp-based IDs to UUIDs if needed
+                const subtaskId = /^\d+$/.test(subtask.id) ? crypto.randomUUID() : subtask.id
                 allTasks.push({
-                  id: subtask.id,
-                  project_id: project.id,
+                  id: subtaskId,
+                  project_id: projectId,
                   title: subtask.title,
                   description: subtask.description,
                   focus: subtask.focus,
@@ -160,12 +167,15 @@ export async function migrateIdeationSessions(userId: string): Promise<number> {
 
     for (const session of sessions) {
       try {
+        // Convert old timestamp-based IDs to UUIDs if needed
+        const sessionId = /^\d+$/.test(session.id) ? crypto.randomUUID() : session.id
+        
         // Upsert session
         const { error: sessionError } = await supabase
           .from("ideation_sessions")
           .upsert(
             {
-              id: session.id,
+              id: sessionId,
               user_id: userId,
               title: session.title,
               description: session.description,
@@ -185,25 +195,29 @@ export async function migrateIdeationSessions(userId: string): Promise<number> {
         }
 
         // Delete existing ideas
-        await supabase.from("ideas").delete().eq("session_id", session.id)
+        await supabase.from("ideas").delete().eq("session_id", sessionId)
 
         // Insert ideas
         if (session.ideas && session.ideas.length > 0) {
-          const ideasToInsert = session.ideas.map((idea) => ({
-            id: idea.id,
-            session_id: session.id,
-            content: idea.content,
-            card_id: idea.cardId,
-            card_text: idea.cardText,
-            notes: idea.notes || "",
-            status: idea.status,
-            attached_files: idea.attachedFiles || [],
-            wins: idea.wins || null,
-            score: idea.score || null,
-            thurstone_score: idea.thurstoneScore || null,
-            timestamp: new Date(idea.timestamp).toISOString(),
-            created_at: new Date(idea.timestamp).toISOString(),
-          }))
+          const ideasToInsert = session.ideas.map((idea) => {
+            // Convert old timestamp-based IDs to UUIDs if needed
+            const ideaId = /^\d+$/.test(idea.id) ? crypto.randomUUID() : idea.id
+            return {
+              id: ideaId,
+              session_id: sessionId,
+              content: idea.content,
+              card_id: idea.cardId,
+              card_text: idea.cardText,
+              notes: idea.notes || "",
+              status: idea.status,
+              attached_files: idea.attachedFiles || [],
+              wins: idea.wins || null,
+              score: idea.score || null,
+              thurstone_score: idea.thurstoneScore || null,
+              timestamp: new Date(idea.timestamp).toISOString(),
+              created_at: new Date(idea.timestamp).toISOString(),
+            }
+          })
 
           const { error: ideasError } = await supabase.from("ideas").insert(ideasToInsert)
 
