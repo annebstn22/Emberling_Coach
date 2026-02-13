@@ -430,7 +430,17 @@ Return the same structure but with titles and descriptions rewritten in ${taskPe
       })
 
       if (!response.ok) {
-        throw new Error("Failed to reformulate tasks")
+        let errorMessage = "Failed to reformulate tasks"
+        try {
+          const data = await response.json()
+          if (data?.error && typeof data.error === "string") {
+            errorMessage = data.error
+          }
+        } catch {
+          // ignore JSON parse failures; keep generic message
+        }
+
+        throw new Error(errorMessage)
       }
 
       const { text } = await response.json()
@@ -552,7 +562,17 @@ Writing project: "${projectDescription}"`
         })
 
         if (!response.ok) {
-          throw new Error("Failed to generate tasks")
+          let errorMessage = "Failed to generate tasks"
+          try {
+            const data = await response.json()
+            if (data?.error && typeof data.error === "string") {
+              errorMessage = data.error
+            }
+          } catch {
+            // ignore JSON parse failures; keep generic message
+          }
+
+          throw new Error(errorMessage)
         }
 
         const { text } = await response.json()
@@ -771,7 +791,17 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
         })
 
         if (!response.ok) {
-          throw new Error("Failed to evaluate progress")
+          let errorMessage = "Failed to evaluate progress"
+          try {
+            const data = await response.json()
+            if (data?.error && typeof data.error === "string") {
+              errorMessage = data.error
+            }
+          } catch {
+            // ignore JSON parse failures; keep generic message
+          }
+
+          throw new Error(errorMessage)
         }
 
         const { text } = await response.json()
