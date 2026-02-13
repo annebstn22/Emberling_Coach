@@ -138,9 +138,13 @@ export default function PreWritingIdeation({
 
   // Load sessions from Supabase
   const loadSessionsFromSupabase = async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      console.log("No user ID, skipping session load")
+      return
+    }
 
     try {
+      console.log(`Loading sessions for user ${user.id}`)
       const { data: sessionsData, error } = await supabase
         .from("ideation_sessions")
         .select("*, ideas(*)")
@@ -149,35 +153,49 @@ export default function PreWritingIdeation({
 
       if (error) {
         console.error("Error loading sessions:", error)
+        console.error("Error details:", JSON.stringify(error, null, 2))
         return
       }
 
-      if (sessionsData) {
-        const formattedSessions: IdeationSession[] = sessionsData.map((s: any) => ({
-          id: s.id,
-          title: s.title,
-          description: s.description,
-          createdAt: new Date(s.created_at),
-          ideas: (s.ideas || []).map((idea: any) => ({
+      console.log(`Raw sessions data from Supabase:`, sessionsData)
+
+      if (sessionsData && sessionsData.length > 0) {
+        console.log(`Loaded ${sessionsData.length} sessions from Supabase`)
+        const formattedSessions: IdeationSession[] = sessionsData.map((s: any) => {
+          const ideas = (s.ideas || []).map((idea: any) => ({
             id: idea.id,
-            content: idea.content,
-            cardId: idea.card_id,
-            cardText: idea.card_text,
-            notes: idea.notes,
+            content: idea.content || "",
+            cardId: idea.card_id || "",
+            cardText: idea.card_text || "",
+            notes: idea.notes || "",
             timestamp: new Date(idea.timestamp),
-            status: idea.status as "active" | "discarded" | "selected",
+            status: (idea.status || "active") as "active" | "discarded" | "selected",
             attachedFiles: idea.attached_files || undefined,
             wins: idea.wins || undefined,
             score: idea.score || undefined,
             thurstoneScore: idea.thurstone_score ? Number(idea.thurstone_score) : undefined,
-          })),
-          timer: s.timer,
-          isTimerRunning: s.is_timer_running,
-          uploadedFiles: s.uploaded_files || [],
-          isComplete: s.is_complete,
-        }))
+          }))
+          
+          console.log(`Session ${s.id} (${s.title}) has ${ideas.length} ideas`)
+          
+          return {
+            id: s.id,
+            title: s.title,
+            description: s.description,
+            createdAt: new Date(s.created_at),
+            ideas: ideas,
+            timer: s.timer,
+            isTimerRunning: s.is_timer_running,
+            uploadedFiles: s.uploaded_files || [],
+            isComplete: s.is_complete,
+          }
+        })
 
+        console.log(`Setting ${formattedSessions.length} formatted sessions`)
         setAllSessions(formattedSessions)
+      } else {
+        console.log("No sessions found in database")
+        setAllSessions([])
       }
     } catch (error) {
       console.error("Error loading sessions:", error)
@@ -187,8 +205,45 @@ export default function PreWritingIdeation({
   useEffect(() => {
     if (user?.id) {
       loadSessionsFromSupabase()
+    } else {
+      // Clear sessions if no user
+      setAllSessions([])
     }
   }, [user?.id])
+
+  // Reload sessions when navigating to dashboard
+  useEffect(() => {
+    if (currentView === "dashboard" && user?.id) {
+      loadSessionsFromSupabase()
+    }
+  }, [currentView, user?.id])
+
+  // Auto-save session to Supabase when it changes (but not if it's already complete)
+  useEffect(() => {
+    if (session && user?.id && !session.isComplete) {
+      // Debounce saves to avoid too many database calls
+      const timeoutId = setTimeout(async () => {
+        try {
+          await saveSessionToSupabase(session)
+          // Also update allSessions to keep it in sync
+          setAllSessions((prev) => {
+            const existingIndex = prev.findIndex((s) => s.id === session.id)
+            if (existingIndex >= 0) {
+              const updated = [...prev]
+              updated[existingIndex] = session
+              return updated
+            } else {
+              return [session, ...prev]
+            }
+          })
+        } catch (error) {
+          console.error("Error auto-saving session:", error)
+        }
+      }, 1000) // Save 1 second after last change
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [session, user?.id])
 
   // Save session to Supabase
   const saveSessionToSupabase = async (session: IdeationSession) => {
@@ -220,18 +275,22 @@ export default function PreWritingIdeation({
       }
 
       // Delete existing ideas for this session
-      await supabase.from("ideas").delete().eq("session_id", session.id)
+      const { error: deleteError } = await supabase.from("ideas").delete().eq("session_id", session.id)
+      
+      if (deleteError) {
+        console.error("Error deleting existing ideas:", deleteError)
+      }
 
       // Insert all ideas
       if (session.ideas.length > 0) {
         const ideasToInsert = session.ideas.map((idea) => ({
           id: idea.id,
           session_id: session.id,
-          content: idea.content,
-          card_id: idea.cardId,
-          card_text: idea.cardText,
-          notes: idea.notes,
-          status: idea.status,
+          content: idea.content || "",
+          card_id: idea.cardId || "",
+          card_text: idea.cardText || "",
+          notes: idea.notes || "",
+          status: idea.status || "active",
           attached_files: idea.attachedFiles || [],
           wins: idea.wins || null,
           score: idea.score || null,
@@ -240,11 +299,16 @@ export default function PreWritingIdeation({
           created_at: idea.timestamp.toISOString(),
         }))
 
-        const { error: ideasError } = await supabase.from("ideas").insert(ideasToInsert)
+        const { data: insertedIdeas, error: ideasError } = await supabase.from("ideas").insert(ideasToInsert).select()
 
         if (ideasError) {
           console.error("Error saving ideas:", ideasError)
+          console.error("Ideas that failed to save:", ideasToInsert)
+        } else {
+          console.log(`Successfully saved ${insertedIdeas?.length || 0} ideas for session ${session.id}`)
         }
+      } else {
+        console.log(`No ideas to save for session ${session.id}`)
       }
     } catch (error) {
       console.error("Error saving session:", error)
@@ -277,11 +341,11 @@ export default function PreWritingIdeation({
     return () => clearInterval(interval)
   }, [session?.isTimerRunning])
 
-  const startSession = () => {
+  const startSession = async () => {
     if (!sessionTitle.trim()) return
 
     const newSession: IdeationSession = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(), // Use UUID instead of timestamp for better uniqueness
       title: sessionTitle,
       description: sessionDescription,
       createdAt: new Date(),
@@ -295,13 +359,19 @@ export default function PreWritingIdeation({
     setSession(newSession)
     setCurrentView("ideate")
     setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
+    
+    // Immediately save the new session to Supabase
+    if (user?.id) {
+      await saveSessionToSupabase(newSession)
+      setAllSessions((prev) => [newSession, ...prev])
+    }
   }
 
   const addIdea = () => {
     if (!currentIdea.trim() || !session) return
 
     const newIdea: IdeaEntry = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       content: currentIdea,
       cardId: STRATEGY_CARDS[currentCardIndex].id,
       cardText: STRATEGY_CARDS[currentCardIndex].text,
@@ -327,12 +397,13 @@ export default function PreWritingIdeation({
     setCurrentNotes("")
   }
 
-  const discardIdea = (ideaId: string) => {
+  const discardIdea = async (ideaId: string) => {
     if (!session) return
-    setSession({
-      ...session,
-      ideas: session.ideas.map((idea) => (idea.id === ideaId ? { ...idea, status: "discarded" } : idea)),
-    })
+    const idea = session.ideas.find((i) => i.id === ideaId)
+    if (idea) {
+      // Send to misfits and mark as discarded
+      await sendToMisfits(idea)
+    }
   }
 
   const selectIdea = (ideaId: string) => {
@@ -353,13 +424,18 @@ export default function PreWritingIdeation({
     }
   }
 
-  const completeSession = (sessionToComplete?: IdeationSession) => {
+  const completeSession = async (sessionToComplete?: IdeationSession) => {
     const sessionToSave = sessionToComplete || session
     if (!sessionToSave) return
     const completedSession = { ...sessionToSave, isComplete: true, isTimerRunning: false }
     setSession(completedSession)
     const existingSessions = allSessions.filter((s) => s.id !== sessionToSave.id)
-    saveSessions([completedSession, ...existingSessions])
+    
+    // Ensure the completed session is saved to Supabase
+    await saveSessionToSupabase(completedSession)
+    
+    // Update local state
+    setAllSessions([completedSession, ...existingSessions])
   }
 
   const handleRankingComplete = (rankedIdeas: IdeaEntry[]) => {
@@ -381,29 +457,95 @@ export default function PreWritingIdeation({
   }
 
   const sendToMisfits = async (idea: IdeaEntry) => {
-    if (!user?.id) return
+    if (!user?.id || !session) return
 
     try {
+      // Save to misfit_ideas table
       const misfitIdea = {
         id: crypto.randomUUID(),
         user_id: user.id,
         content: idea.content,
-        notes: idea.notes,
+        notes: idea.notes || "",
         tags: [],
         reason_discarded: "Sent from comparative judgment",
-        original_session_title: session?.title || null,
+        original_session_title: session.title || null,
         discarded_at: new Date().toISOString(),
         attached_files: idea.attachedFiles || [],
         created_at: new Date().toISOString(),
       }
 
-      const { error } = await supabase.from("misfit_ideas").insert(misfitIdea)
+      const { error: misfitError } = await supabase.from("misfit_ideas").insert(misfitIdea)
 
-      if (error) {
-        console.error("Error saving misfit idea:", error)
+      if (misfitError) {
+        console.error("Error saving misfit idea:", misfitError)
+        return
       }
+
+      // Mark the idea as discarded in the session and move to bottom
+      const updatedIdeas = session.ideas.map((i) => 
+        i.id === idea.id ? { ...i, status: "discarded" as const } : i
+      )
+      
+      // Sort: active/selected first, then discarded at the bottom
+      const sortedIdeas = [
+        ...updatedIdeas.filter((i) => i.status !== "discarded"),
+        ...updatedIdeas.filter((i) => i.status === "discarded")
+      ]
+
+      const updatedSession = { ...session, ideas: sortedIdeas }
+      setSession(updatedSession)
+      
+      // Update allSessions
+      setAllSessions((prev) => {
+        const existingIndex = prev.findIndex((s) => s.id === session.id)
+        if (existingIndex >= 0) {
+          const updated = [...prev]
+          updated[existingIndex] = updatedSession
+          return updated
+        }
+        return [updatedSession, ...prev]
+      })
+
+      // Save the updated session to Supabase
+      await saveSessionToSupabase(updatedSession)
     } catch (error) {
-      console.error("Error saving misfit idea:", error)
+      console.error("Error sending idea to misfits:", error)
+    }
+  }
+
+  const restoreFromMisfits = async (ideaId: string) => {
+    if (!session) return
+
+    try {
+      // Mark the idea as active again
+      const updatedIdeas = session.ideas.map((i) => 
+        i.id === ideaId ? { ...i, status: "active" as const } : i
+      )
+      
+      // Sort: active/selected first, then discarded at the bottom
+      const sortedIdeas = [
+        ...updatedIdeas.filter((i) => i.status !== "discarded"),
+        ...updatedIdeas.filter((i) => i.status === "discarded")
+      ]
+
+      const updatedSession = { ...session, ideas: sortedIdeas }
+      setSession(updatedSession)
+      
+      // Update allSessions
+      setAllSessions((prev) => {
+        const existingIndex = prev.findIndex((s) => s.id === session.id)
+        if (existingIndex >= 0) {
+          const updated = [...prev]
+          updated[existingIndex] = updatedSession
+          return updated
+        }
+        return [updatedSession, ...prev]
+      })
+
+      // Save the updated session to Supabase
+      await saveSessionToSupabase(updatedSession)
+    } catch (error) {
+      console.error("Error restoring idea from misfits:", error)
     }
   }
 
@@ -685,6 +827,7 @@ export default function PreWritingIdeation({
   if (currentView === "ideate") {
     const currentCard = STRATEGY_CARDS[currentCardIndex]
     const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
+    const discardedIdeas = session.ideas.filter((idea) => idea.status === "discarded")
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -838,7 +981,7 @@ export default function PreWritingIdeation({
               </Card>
 
               {/* Ideas Grid */}
-              {activeIdeas.length > 0 && (
+              {(activeIdeas.length > 0 || discardedIdeas.length > 0) && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-sm">Ideas Captured</CardTitle>
@@ -894,6 +1037,44 @@ export default function PreWritingIdeation({
                           )}
                         </div>
                       ))}
+                      
+                      {/* Show discarded ideas at the bottom, greyed out */}
+                      {discardedIdeas.length > 0 && (
+                        <div className="mt-6 pt-6 border-t-2 border-gray-300">
+                          <h3 className="text-xs font-medium text-gray-500 mb-3 flex items-center">
+                            <Archive className="h-3 w-3 mr-2" />
+                            Discarded Ideas ({discardedIdeas.length})
+                          </h3>
+                          {discardedIdeas.map((idea) => (
+                            <div
+                              key={idea.id}
+                              className="border border-gray-300 rounded-lg p-4 bg-gray-50 opacity-60 hover:opacity-80 transition-opacity mb-3"
+                            >
+                              <div className="flex items-start justify-between mb-2">
+                                <div className="flex items-center space-x-2">
+                                  <Archive className="h-3 w-3 text-gray-400" />
+                                  <span className="text-xs text-gray-500">
+                                    {new Date(idea.timestamp).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => restoreFromMisfits(idea.id)}
+                                  className="h-7 text-xs"
+                                >
+                                  <RotateCcw className="h-3 w-3 mr-1" />
+                                  Undo
+                                </Button>
+                              </div>
+                              <p className="text-sm text-gray-600 line-through mb-1">{idea.content}</p>
+                              {idea.notes && (
+                                <p className="text-xs text-gray-500 italic line-through">"{idea.notes}"</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1026,20 +1207,43 @@ export default function PreWritingIdeation({
                 </Card>
               ) : (
                 discardedIdeas.map((idea) => (
-                  <Card key={idea.id} className="opacity-75 hover:opacity-100 transition-opacity">
+                  <Card key={idea.id} className="bg-gray-50 border-gray-200 opacity-75 hover:opacity-100 transition-opacity">
                     <CardContent className="p-6">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center space-x-2">
                           <Archive className="h-4 w-4 text-gray-400" />
                           <div>
                             <p className="text-xs text-gray-500">Discarded from "{idea.cardText}"</p>
+                            <p className="text-xs text-gray-400">{new Date(idea.timestamp).toLocaleString()}</p>
                           </div>
                         </div>
-                        <Button size="sm" variant="ghost" onClick={() => selectIdea(idea.id)}>
-                          Restore
+                        <Button size="sm" variant="outline" onClick={() => restoreFromMisfits(idea.id)}>
+                          <RotateCcw className="h-4 w-4 mr-2" />
+                          Undo
                         </Button>
                       </div>
-                      <p className="text-gray-700 line-through">{idea.content}</p>
+                      <p className="text-gray-600 line-through mb-2">{idea.content}</p>
+                      {idea.notes && (
+                        <p className="text-sm text-gray-500 italic border-l-2 border-gray-300 pl-3 line-through">{idea.notes}</p>
+                      )}
+                      {idea.attachedFiles && idea.attachedFiles.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-300">
+                          <p className="text-xs text-gray-500 font-medium mb-2">Attachments:</p>
+                          <div className="space-y-1">
+                            {idea.attachedFiles.map((file) => (
+                              <a
+                                key={file.url}
+                                href={file.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline"
+                              >
+                                {file.name}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))

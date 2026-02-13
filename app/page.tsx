@@ -359,12 +359,20 @@ export default function WritingCoachApp() {
     }
   }
 
-  // Save projects to Supabase whenever projects change
+  // Save projects to Supabase whenever projects change (debounced to avoid excessive saves)
   useEffect(() => {
     if (projects.length > 0 && user) {
-      projects.forEach((project) => {
-        saveProjectToSupabase(project)
-      })
+      // Debounce saves to avoid too many database calls
+      const timeoutId = setTimeout(async () => {
+        try {
+          // Save all projects
+          await Promise.all(projects.map((project) => saveProjectToSupabase(project)))
+        } catch (error) {
+          console.error("Error saving projects:", error)
+        }
+      }, 1000) // Save 1 second after last change
+
+      return () => clearTimeout(timeoutId)
     }
   }, [projects, user])
 
@@ -545,17 +553,27 @@ export default function WritingCoachApp() {
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-    setProjects([])
-    setCurrentProject(null)
-    setCurrentState("auth")
-    setSelectedTool(null)
-    setEmail("")
-    setPassword("")
-    setName("")
-    setAuthError("")
-    setResetEmailSent(false)
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        console.error("Error signing out:", error)
+        return
+      }
+      
+      // Clear all state
+      setUser(null)
+      setProjects([])
+      setCurrentProject(null)
+      setCurrentState("auth")
+      setSelectedTool(null)
+      setEmail("")
+      setPassword("")
+      setName("")
+      setAuthError("")
+      setResetEmailSent(false)
+    } catch (error) {
+      console.error("Error during logout:", error)
+    }
   }
 
   const getCoachPersonality = (mode: CoachMode) => {
@@ -1135,6 +1153,14 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
 
     setCurrentProject(updatedProject)
     setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+    
+    // Immediately save when a task is completed
+    if (evaluation.shouldContinue && !evaluation.needsImprovement) {
+      saveProjectToSupabase(updatedProject).catch((error) => {
+        console.error("Error saving completed task:", error)
+      })
+    }
+    
     setIsEvaluating(false)
   }
 
@@ -1954,6 +1980,11 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       // Save the project
                       setCurrentProject(updatedProject)
                       setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+                      
+                      // Immediately save when task is marked as complete
+                      saveProjectToSupabase(updatedProject).catch((error) => {
+                        console.error("Error saving completed task:", error)
+                      })
 
                       // Automatically move to next task (no confirmation page)
                       updatedProject.currentTaskIndex += 1
