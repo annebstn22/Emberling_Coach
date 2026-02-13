@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import type { User } from "@supabase/supabase-js"
+import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -30,8 +32,14 @@ const SUGGESTED_TAGS = [
   "absurd",
 ]
 
-export default function IslandOfMisfits({ onMisfitImport }: { onMisfitImport?: (idea: MisfitIdea) => void }) {
-  const [misfitIdeas, setMisfitIdeas] = useState<MisfitIdea[]>(JSON.parse(localStorage.getItem("misfit-ideas") || "[]"))
+export default function IslandOfMisfits({
+  user,
+  onMisfitImport,
+}: {
+  user: User | null
+  onMisfitImport?: (idea: MisfitIdea) => void
+}) {
+  const [misfitIdeas, setMisfitIdeas] = useState<MisfitIdea[]>([])
   const [showForm, setShowForm] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -43,30 +51,106 @@ export default function IslandOfMisfits({ onMisfitImport }: { onMisfitImport?: (
   })
   const [newTag, setNewTag] = useState("")
 
-  const saveMisfits = (ideas: MisfitIdea[]) => {
-    localStorage.setItem("misfit-ideas", JSON.stringify(ideas))
-    setMisfitIdeas(ideas)
-  }
+  // Load misfit ideas from Supabase
+  const loadMisfitIdeas = async () => {
+    if (!user?.id) return
 
-  const addMisfitIdea = () => {
-    if (!newIdea.content.trim()) return
+    try {
+      const { data, error } = await supabase
+        .from("misfit_ideas")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("discarded_at", { ascending: false })
 
-    const idea: MisfitIdea = {
-      id: Date.now().toString(),
-      content: newIdea.content,
-      notes: newIdea.notes,
-      tags: newIdea.tags,
-      reasonDiscarded: newIdea.reasonDiscarded,
-      discardedAt: new Date(),
+      if (error) {
+        console.error("Error loading misfit ideas:", error)
+        return
+      }
+
+      if (data) {
+        const formattedIdeas: MisfitIdea[] = data.map((idea: any) => ({
+          id: idea.id,
+          content: idea.content,
+          notes: idea.notes,
+          tags: idea.tags || [],
+          reasonDiscarded: idea.reason_discarded,
+          originalSessionTitle: idea.original_session_title || undefined,
+          discardedAt: new Date(idea.discarded_at),
+          rediscoveredIn: idea.rediscovered_in || undefined,
+          attachedFiles: idea.attached_files || undefined,
+        }))
+
+        setMisfitIdeas(formattedIdeas)
+      }
+    } catch (error) {
+      console.error("Error loading misfit ideas:", error)
     }
-
-    saveMisfits([...misfitIdeas, idea])
-    setNewIdea({ content: "", notes: "", tags: [], reasonDiscarded: "" })
-    setShowForm(false)
   }
 
-  const removeMisfitIdea = (id: string) => {
-    saveMisfits(misfitIdeas.filter((idea) => idea.id !== id))
+  useEffect(() => {
+    if (user?.id) {
+      loadMisfitIdeas()
+    }
+  }, [user?.id])
+
+  const saveMisfits = async (ideas: MisfitIdea[]) => {
+    setMisfitIdeas(ideas)
+    // Individual saves are handled by add/remove functions
+  }
+
+  const addMisfitIdea = async () => {
+    if (!newIdea.content.trim() || !user?.id) return
+
+    try {
+      const ideaId = crypto.randomUUID()
+      const ideaData = {
+        id: ideaId,
+        user_id: user.id,
+        content: newIdea.content,
+        notes: newIdea.notes,
+        tags: newIdea.tags,
+        reason_discarded: newIdea.reasonDiscarded,
+        discarded_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }
+
+      const { error } = await supabase.from("misfit_ideas").insert(ideaData)
+
+      if (error) {
+        console.error("Error adding misfit idea:", error)
+        return
+      }
+
+      const idea: MisfitIdea = {
+        id: ideaId,
+        content: newIdea.content,
+        notes: newIdea.notes,
+        tags: newIdea.tags,
+        reasonDiscarded: newIdea.reasonDiscarded,
+        discardedAt: new Date(),
+      }
+
+      setMisfitIdeas([...misfitIdeas, idea])
+      setNewIdea({ content: "", notes: "", tags: [], reasonDiscarded: "" })
+      setShowForm(false)
+    } catch (error) {
+      console.error("Error adding misfit idea:", error)
+    }
+  }
+
+  const removeMisfitIdea = async (id: string) => {
+    try {
+      const { error } = await supabase.from("misfit_ideas").delete().eq("id", id)
+
+      if (error) {
+        console.error("Error removing misfit idea:", error)
+        return
+      }
+
+      setMisfitIdeas(misfitIdeas.filter((idea) => idea.id !== id))
+    } catch (error) {
+      console.error("Error removing misfit idea:", error)
+    }
   }
 
   const toggleTag = (tag: string) => {

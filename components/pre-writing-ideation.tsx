@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import type { User } from "@supabase/supabase-js"
+import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -135,16 +136,127 @@ export default function PreWritingIdeation({
 
   const [allSessions, setAllSessions] = useState<IdeationSession[]>([])
 
-  useEffect(() => {
-    const savedSessions = localStorage.getItem("ideation-sessions")
-    if (savedSessions) {
-      setAllSessions(JSON.parse(savedSessions))
-    }
-  }, [])
+  // Load sessions from Supabase
+  const loadSessionsFromSupabase = async () => {
+    if (!user?.id) return
 
-  const saveSessions = (sessions: IdeationSession[]) => {
-    localStorage.setItem("ideation-sessions", JSON.stringify(sessions))
+    try {
+      const { data: sessionsData, error } = await supabase
+        .from("ideation_sessions")
+        .select("*, ideas(*)")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error loading sessions:", error)
+        return
+      }
+
+      if (sessionsData) {
+        const formattedSessions: IdeationSession[] = sessionsData.map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          description: s.description,
+          createdAt: new Date(s.created_at),
+          ideas: (s.ideas || []).map((idea: any) => ({
+            id: idea.id,
+            content: idea.content,
+            cardId: idea.card_id,
+            cardText: idea.card_text,
+            notes: idea.notes,
+            timestamp: new Date(idea.timestamp),
+            status: idea.status as "active" | "discarded" | "selected",
+            attachedFiles: idea.attached_files || undefined,
+            wins: idea.wins || undefined,
+            score: idea.score || undefined,
+            thurstoneScore: idea.thurstone_score ? Number(idea.thurstone_score) : undefined,
+          })),
+          timer: s.timer,
+          isTimerRunning: s.is_timer_running,
+          uploadedFiles: s.uploaded_files || [],
+          isComplete: s.is_complete,
+        }))
+
+        setAllSessions(formattedSessions)
+      }
+    } catch (error) {
+      console.error("Error loading sessions:", error)
+    }
+  }
+
+  useEffect(() => {
+    if (user?.id) {
+      loadSessionsFromSupabase()
+    }
+  }, [user?.id])
+
+  // Save session to Supabase
+  const saveSessionToSupabase = async (session: IdeationSession) => {
+    if (!user?.id) return
+
+    try {
+      // Upsert session
+      const { error: sessionError } = await supabase
+        .from("ideation_sessions")
+        .upsert(
+          {
+            id: session.id,
+            user_id: user.id,
+            title: session.title,
+            description: session.description,
+            timer: session.timer,
+            is_timer_running: session.isTimerRunning,
+            is_complete: session.isComplete || false,
+            uploaded_files: session.uploadedFiles || [],
+            created_at: session.createdAt.toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        )
+
+      if (sessionError) {
+        console.error("Error saving session:", sessionError)
+        return
+      }
+
+      // Delete existing ideas for this session
+      await supabase.from("ideas").delete().eq("session_id", session.id)
+
+      // Insert all ideas
+      if (session.ideas.length > 0) {
+        const ideasToInsert = session.ideas.map((idea) => ({
+          id: idea.id,
+          session_id: session.id,
+          content: idea.content,
+          card_id: idea.cardId,
+          card_text: idea.cardText,
+          notes: idea.notes,
+          status: idea.status,
+          attached_files: idea.attachedFiles || [],
+          wins: idea.wins || null,
+          score: idea.score || null,
+          thurstone_score: idea.thurstoneScore || null,
+          timestamp: idea.timestamp.toISOString(),
+          created_at: idea.timestamp.toISOString(),
+        }))
+
+        const { error: ideasError } = await supabase.from("ideas").insert(ideasToInsert)
+
+        if (ideasError) {
+          console.error("Error saving ideas:", ideasError)
+        }
+      }
+    } catch (error) {
+      console.error("Error saving session:", error)
+    }
+  }
+
+  const saveSessions = async (sessions: IdeationSession[]) => {
     setAllSessions(sessions)
+    // Save each session to Supabase
+    for (const session of sessions) {
+      await saveSessionToSupabase(session)
+    }
   }
 
   // Timer effect
@@ -268,19 +380,31 @@ export default function PreWritingIdeation({
     completeSession(updatedSession)
   }
 
-  const sendToMisfits = (idea: IdeaEntry) => {
-    const misfitIdeas = JSON.parse(localStorage.getItem("misfit-ideas") || "[]")
-    const misfitIdea = {
-      id: Date.now().toString(),
-      content: idea.content,
-      notes: idea.notes,
-      tags: [],
-      reasonDiscarded: "Sent from comparative judgment",
-      originalSessionTitle: session?.title,
-      discardedAt: new Date(),
-      attachedFiles: idea.attachedFiles,
+  const sendToMisfits = async (idea: IdeaEntry) => {
+    if (!user?.id) return
+
+    try {
+      const misfitIdea = {
+        id: crypto.randomUUID(),
+        user_id: user.id,
+        content: idea.content,
+        notes: idea.notes,
+        tags: [],
+        reason_discarded: "Sent from comparative judgment",
+        original_session_title: session?.title || null,
+        discarded_at: new Date().toISOString(),
+        attached_files: idea.attachedFiles || [],
+        created_at: new Date().toISOString(),
+      }
+
+      const { error } = await supabase.from("misfit_ideas").insert(misfitIdea)
+
+      if (error) {
+        console.error("Error saving misfit idea:", error)
+      }
+    } catch (error) {
+      console.error("Error saving misfit idea:", error)
     }
-    localStorage.setItem("misfit-ideas", JSON.stringify([...misfitIdeas, misfitIdea]))
   }
 
   const formatTime = (seconds: number) => {
@@ -468,6 +592,7 @@ export default function PreWritingIdeation({
         </div>
         <div className="max-w-6xl mx-auto p-6">
           <IslandOfMisfits
+            user={user}
             onMisfitImport={(idea) => {
               // Could implement restoring to current session if needed
               console.log("[v0] Restoring misfit idea:", idea)

@@ -42,6 +42,9 @@ import {
 } from "lucide-react"
 
 import PreWritingIdeation from "@/components/pre-writing-ideation"
+import { supabase } from "@/lib/supabase"
+import type { User } from "@supabase/supabase-js"
+import { migrateAllLocalStorageData } from "@/lib/migrate-localStorage"
 
 type CoachMode = "normal" | "baymax" | "edna"
 
@@ -93,11 +96,12 @@ interface TypingStats {
 
 export default function WritingCoachApp() {
   const [user, setUser] = useState<User | null>(null)
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login")
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "reset">("login")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [name, setName] = useState("")
   const [authError, setAuthError] = useState("")
+  const [resetEmailSent, setResetEmailSent] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [projectDescription, setProjectDescription] = useState("")
@@ -134,35 +138,233 @@ export default function WritingCoachApp() {
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
 
-  // Load user and projects from localStorage on mount
+  // Load user session and projects from Supabase on mount
   useEffect(() => {
-    const savedUser = localStorage.getItem("writing-coach-user")
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser)
-      setUser({
-        ...parsedUser,
-        createdAt: new Date(parsedUser.createdAt),
-      })
-      setCurrentState("tool-select")
-
-      // Load user's projects
-      const savedProjects = localStorage.getItem(`writing-coach-projects-${parsedUser.id}`)
-      if (savedProjects) {
-        const parsed = JSON.parse(savedProjects)
-        setProjects(
-          parsed.map((p: any) => ({
-            ...p,
-            createdAt: new Date(p.createdAt),
-          })),
-        )
+    const loadSessionAndProjects = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (session?.user) {
+        setUser(session.user)
+        setCurrentState("tool-select")
+        await loadProjectsFromSupabase(session.user.id)
       }
     }
+
+    loadSessionAndProjects()
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        setUser(session.user)
+        setCurrentState("tool-select")
+        
+        // Check if migration is needed (localStorage has data but Supabase doesn't)
+        const hasLocalStorageData =
+          localStorage.getItem(`writing-coach-projects-${session.user.id}`) ||
+          localStorage.getItem("ideation-sessions") ||
+          localStorage.getItem("misfit-ideas")
+        
+        if (hasLocalStorageData) {
+          // Check if data already exists in Supabase
+          const { data: existingProjects } = await supabase
+            .from("projects")
+            .select("id")
+            .eq("user_id", session.user.id)
+            .limit(1)
+          
+          // Only migrate if localStorage has data but Supabase doesn't
+          if (!existingProjects || existingProjects.length === 0) {
+            try {
+              const result = await migrateAllLocalStorageData(session.user.id)
+              console.log("Migration completed:", result)
+            } catch (error) {
+              console.error("Migration error:", error)
+            }
+          }
+        }
+        
+        await loadProjectsFromSupabase(session.user.id)
+      } else {
+        setUser(null)
+        setCurrentState("auth")
+        setProjects([])
+        setCurrentProject(null)
+      }
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
-  // Save projects to localStorage whenever projects change
+  // Load projects from Supabase
+  const loadProjectsFromSupabase = async (userId: string) => {
+    try {
+      const { data: projectsData, error } = await supabase
+        .from("projects")
+        .select("*, tasks(*)")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error loading projects:", error)
+        return
+      }
+
+      if (projectsData) {
+        const formattedProjects: Project[] = projectsData.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          coachMode: p.coach_mode as CoachMode,
+          currentTaskIndex: p.current_task_index,
+          skipsUsed: p.skips_used,
+          completedWork: p.completed_work || [],
+          createdAt: new Date(p.created_at),
+          tasks: (p.tasks || []).map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description,
+            focus: t.focus,
+            duration: t.duration,
+            suggestedDuration: t.suggested_duration,
+            completed: t.completed,
+            feedback: t.feedback || undefined,
+            userWork: t.user_work || undefined,
+            completedAt: t.completed_at ? new Date(t.completed_at) : undefined,
+            needsImprovement: t.needs_improvement,
+            attempts: t.attempts,
+            parentTaskId: t.parent_task_id || undefined,
+            actionablePoints: t.actionable_points || [],
+            subtasks: [], // Will be populated from parent_task_id relationships
+          })),
+        }))
+
+        // Build subtask relationships
+        formattedProjects.forEach((project) => {
+          project.tasks.forEach((task) => {
+            if (task.parentTaskId) {
+              const parentTask = project.tasks.find((t) => t.id === task.parentTaskId)
+              if (parentTask) {
+                if (!parentTask.subtasks) {
+                  parentTask.subtasks = []
+                }
+                parentTask.subtasks.push(task)
+              }
+            }
+          })
+        })
+
+        setProjects(formattedProjects)
+      }
+    } catch (error) {
+      console.error("Error loading projects:", error)
+    }
+  }
+
+  // Save project to Supabase
+  const saveProjectToSupabase = async (project: Project) => {
+    if (!user) return
+
+    try {
+      // Upsert project
+      const { data: projectData, error: projectError } = await supabase
+        .from("projects")
+        .upsert(
+          {
+            id: project.id,
+            user_id: user.id,
+            name: project.name,
+            description: project.description,
+            coach_mode: project.coachMode,
+            current_task_index: project.currentTaskIndex,
+            skips_used: project.skipsUsed,
+            completed_work: project.completedWork,
+            created_at: project.createdAt.toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        )
+        .select()
+        .single()
+
+      if (projectError) {
+        console.error("Error saving project:", projectError)
+        return
+      }
+
+      // Delete existing tasks for this project
+      await supabase.from("tasks").delete().eq("project_id", project.id)
+
+      // Insert all tasks
+      if (project.tasks.length > 0) {
+        const tasksToInsert = project.tasks.flatMap((task) => {
+          const baseTask = {
+            id: task.id,
+            project_id: project.id,
+            title: task.title,
+            description: task.description,
+            focus: task.focus,
+            duration: task.duration,
+            suggested_duration: task.suggestedDuration,
+            completed: task.completed,
+            user_work: task.userWork || null,
+            feedback: task.feedback || null,
+            completed_at: task.completedAt ? task.completedAt.toISOString() : null,
+            needs_improvement: task.needsImprovement,
+            attempts: task.attempts,
+            parent_task_id: task.parentTaskId || null,
+            actionable_points: task.actionablePoints || [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+
+          // Include subtasks as separate records
+          const allTasks = [baseTask]
+          if (task.subtasks && task.subtasks.length > 0) {
+            task.subtasks.forEach((subtask) => {
+              allTasks.push({
+                id: subtask.id,
+                project_id: project.id,
+                title: subtask.title,
+                description: subtask.description,
+                focus: subtask.focus,
+                duration: subtask.duration,
+                suggested_duration: subtask.suggestedDuration,
+                completed: subtask.completed,
+                user_work: subtask.userWork || null,
+                feedback: subtask.feedback || null,
+                completed_at: subtask.completedAt ? subtask.completedAt.toISOString() : null,
+                needs_improvement: subtask.needsImprovement,
+                attempts: subtask.attempts,
+                parent_task_id: task.id,
+                actionable_points: subtask.actionablePoints || [],
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+            })
+          }
+          return allTasks
+        })
+
+        const { error: tasksError } = await supabase.from("tasks").insert(tasksToInsert.flat())
+
+        if (tasksError) {
+          console.error("Error saving tasks:", tasksError)
+        }
+      }
+    } catch (error) {
+      console.error("Error saving project:", error)
+    }
+  }
+
+  // Save projects to Supabase whenever projects change
   useEffect(() => {
     if (projects.length > 0 && user) {
-      localStorage.setItem(`writing-coach-projects-${user.id}`, JSON.stringify(projects))
+      projects.forEach((project) => {
+        saveProjectToSupabase(project)
+      })
     }
   }, [projects, user])
 
@@ -245,6 +447,11 @@ export default function WritingCoachApp() {
     }
   }, [currentProject])
 
+  // Password validation helper
+  const isStrongPassword = (password: string): boolean => {
+    return /^(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)
+  }
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
     setAuthError("")
@@ -255,58 +462,57 @@ export default function WritingCoachApp() {
         return
       }
 
-      // Check if user already exists
-      const existingUsers = JSON.parse(localStorage.getItem("writing-coach-users") || "[]")
-      if (existingUsers.find((u: User) => u.email === email)) {
-        setAuthError("User with this email already exists")
+      // Validate password strength
+      if (!isStrongPassword(password)) {
+        setAuthError("Password must be at least 8 characters and include a number and a capital letter")
         return
       }
 
-      // Create new user
-      const newUser: User = {
-        id: Date.now().toString(),
+      // Sign up with Supabase
+      const { data, error } = await supabase.auth.signUp({
         email,
-        name,
-        createdAt: new Date(),
+        password,
+        options: {
+          data: {
+            name,
+          },
+        },
+      })
+
+      if (error) {
+        if (error.message.toLowerCase().includes("user already registered") || error.message.toLowerCase().includes("already")) {
+          setAuthError("User with this email already exists")
+        } else {
+          setAuthError(error.message)
+        }
+        return
       }
 
-      // Save to localStorage
-      existingUsers.push(newUser)
-      localStorage.setItem("writing-coach-users", JSON.stringify(existingUsers))
-      localStorage.setItem("writing-coach-user", JSON.stringify(newUser))
-
-      setUser(newUser)
-      setCurrentState("tool-select")
+      if (data.user) {
+        setUser(data.user)
+        setCurrentState("tool-select")
+      }
     } else {
       if (!email.trim() || !password.trim()) {
         setAuthError("Please fill in all fields")
         return
       }
 
-      // Check if user exists
-      const existingUsers = JSON.parse(localStorage.getItem("writing-coach-users") || "[]")
-      const foundUser = existingUsers.find((u: User) => u.email === email)
+      // Sign in with Supabase
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-      if (!foundUser) {
-        setAuthError("User not found")
+      if (error) {
+        setAuthError(error.message || "Invalid email or password")
         return
       }
 
-      // In a real app, you'd verify the password here
-      localStorage.setItem("writing-coach-user", JSON.stringify(foundUser))
-      setUser(foundUser)
-      setCurrentState("tool-select")
-
-      // Load user's projects
-      const savedProjects = localStorage.getItem(`writing-coach-projects-${foundUser.id}`)
-      if (savedProjects) {
-        const parsed = JSON.parse(savedProjects)
-        setProjects(
-          parsed.map((p: any) => ({
-            ...p,
-            createdAt: new Date(p.createdAt),
-          })),
-        )
+      if (data.user) {
+        setUser(data.user)
+        setCurrentState("tool-select")
+        // Projects will be loaded separately via Supabase queries
       }
     }
 
@@ -316,8 +522,30 @@ export default function WritingCoachApp() {
     setName("")
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem("writing-coach-user")
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAuthError("")
+    setResetEmailSent(false)
+
+    if (!email.trim()) {
+      setAuthError("Please enter your email address")
+      return
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/reset`,
+    })
+
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    setResetEmailSent(true)
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
     setProjects([])
     setCurrentProject(null)
@@ -327,6 +555,7 @@ export default function WritingCoachApp() {
     setPassword("")
     setName("")
     setAuthError("")
+    setResetEmailSent(false)
   }
 
   const getCoachPersonality = (mode: CoachMode) => {
@@ -1193,14 +1422,22 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <CardTitle className="text-2xl font-light text-gray-800">
-              {authMode === "login" ? "Welcome Back" : "Create Account"}
+              {authMode === "login"
+                ? "Welcome Back"
+                : authMode === "reset"
+                  ? "Reset Password"
+                  : "Create Account"}
             </CardTitle>
             <p className="text-gray-600 mt-2">
-              {authMode === "login" ? "Sign in to your writing coach account" : "Join the writing coach community"}
+              {authMode === "login"
+                ? "Sign in to your writing coach account"
+                : authMode === "reset"
+                  ? "Enter your email to receive a password reset link"
+                  : "Join the writing coach community"}
             </p>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleAuth} className="space-y-4">
+            <form onSubmit={authMode === "reset" ? handleResetPassword : handleAuth} className="space-y-4">
               {authMode === "signup" && (
                 <div>
                   <Label htmlFor="name">Full Name</Label>
@@ -1225,23 +1462,40 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                   required
                 />
               </div>
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
+              {authMode !== "reset" && (
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                  {authMode === "signup" && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Must be at least 8 characters with a number and capital letter
+                    </p>
+                  )}
+                </div>
+              )}
               {authError && <div className="text-red-600 text-sm text-center">{authError}</div>}
+              {resetEmailSent && (
+                <div className="text-green-600 text-sm text-center bg-green-50 border border-green-200 rounded p-3">
+                  Password reset email sent! Check your inbox and follow the link to reset your password.
+                </div>
+              )}
               <Button type="submit" className="w-full" size="lg">
                 {authMode === "login" ? (
                   <>
                     <LogIn className="h-4 w-4 mr-2" />
                     Sign In
+                  </>
+                ) : authMode === "reset" ? (
+                  <>
+                    <ArrowRight className="h-4 w-4 mr-2" />
+                    Send Reset Link
                   </>
                 ) : (
                   <>
@@ -1251,17 +1505,46 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 )}
               </Button>
             </form>
-            <div className="mt-4 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode(authMode === "login" ? "signup" : "login")
-                  setAuthError("")
-                }}
-                className="text-blue-600 hover:text-blue-700 text-sm"
-              >
-                {authMode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-              </button>
+            <div className="mt-4 space-y-2 text-center">
+              {authMode === "login" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("reset")
+                    setAuthError("")
+                    setResetEmailSent(false)
+                  }}
+                  className="text-blue-600 hover:text-blue-700 text-sm block w-full"
+                >
+                  Forgot password?
+                </button>
+              )}
+              {authMode === "reset" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("login")
+                    setAuthError("")
+                    setResetEmailSent(false)
+                  }}
+                  className="text-blue-600 hover:text-blue-700 text-sm block w-full"
+                >
+                  Back to login
+                </button>
+              )}
+              {authMode !== "reset" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === "login" ? "signup" : "login")
+                    setAuthError("")
+                    setResetEmailSent(false)
+                  }}
+                  className="text-blue-600 hover:text-blue-700 text-sm"
+                >
+                  {authMode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+                </button>
+              )}
             </div>
           </CardContent>
         </Card>
