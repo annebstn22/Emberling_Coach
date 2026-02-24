@@ -17,31 +17,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const loadSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (session?.user) {
-        setUser(session.user)
-      } else {
-        setUser(null)
-      }
+    if (typeof window === "undefined") {
       setLoading(false)
+      return
+    }
+
+    let subscription: { unsubscribe: () => void } | null = null
+
+    const loadSession = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (session?.user) {
+          setUser(session.user)
+        } else {
+          setUser(null)
+        }
+      } catch (error) {
+        console.error("[Auth] Error loading session:", error)
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
     }
 
     loadSession()
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[Logout] Auth state change:", event, "has user:", !!session?.user)
-      setUser(session?.user ?? null)
-      if (event === "SIGNED_OUT") {
-        setUser(null)
-      }
-    })
+    try {
+      const {
+        data: { subscription: sub },
+      } = supabase.auth.onAuthStateChange((event, session) => {
+        console.log("[Logout] Auth state change:", event, "has user:", !!session?.user)
+        setUser(session?.user ?? null)
+        if (event === "SIGNED_OUT") {
+          setUser(null)
+        }
+      })
+      subscription = sub
+    } catch (error) {
+      console.error("[Auth] Error setting up auth listener:", error)
+      setLoading(false)
+    }
 
-    return () => subscription.unsubscribe()
+    return () => subscription?.unsubscribe()
   }, [])
 
   const signOut = async () => {
