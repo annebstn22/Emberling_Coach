@@ -3,6 +3,7 @@ import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { Analytics } from '@vercel/analytics/next'
 import { AuthProvider } from '@/components/auth-provider'
+import { ErrorBoundary } from '@/components/error-boundary'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -44,11 +45,13 @@ html {
 }
         `}</style>
       </head>
-      <body>
-        <AuthProvider>
-          {children}
-          <Analytics />
-        </AuthProvider>
+      <body className="min-h-screen antialiased">
+        <ErrorBoundary>
+          <AuthProvider>
+            {children}
+            <Analytics />
+          </AuthProvider>
+        </ErrorBoundary>
       </body>
     </html>
   )

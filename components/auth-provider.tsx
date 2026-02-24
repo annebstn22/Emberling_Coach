@@ -12,6 +12,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+// Fallback timeout: if loading takes > 5s, show login form anyway (avoids stuck blank/loading)
+const LOADING_TIMEOUT_MS = 5000
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -21,6 +24,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
       return
     }
+
+    const timeoutId = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          console.warn("[Auth] Loading timeout - showing login form")
+          return false
+        }
+        return prev
+      })
+    }, LOADING_TIMEOUT_MS)
 
     let subscription: { unsubscribe: () => void } | null = null
 
@@ -60,7 +73,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
     }
 
-    return () => subscription?.unsubscribe()
+    return () => {
+      clearTimeout(timeoutId)
+      subscription?.unsubscribe()
+    }
   }, [])
 
   const signOut = async () => {

@@ -670,9 +670,9 @@ Writing project: "${projectDescription}"`
           throw new Error("Response is not an array")
         }
 
-        // Create new project
+        // Create new project - use UUIDs for Supabase compatibility
         const newProject: Project = {
-          id: Date.now().toString(),
+          id: crypto.randomUUID(),
           name: projectName,
           description: projectDescription,
           tasks: tasks.map((task: any, index: number) => ({
@@ -681,7 +681,7 @@ Writing project: "${projectDescription}"`
             needsImprovement: false,
             attempts: 0,
             duration: task.suggestedDuration || 20,
-            id: task.id || `task_${index + 1}`,
+            id: crypto.randomUUID(),
             subtasks: [],
           })),
           currentTaskIndex: 0,
@@ -713,7 +713,7 @@ Writing project: "${projectDescription}"`
 
     const fallbackTasks = [
       {
-        id: "task_1",
+        id: crypto.randomUUID(),
         title:
           coachMode === "baymax"
             ? "Diagnostic Phase: Research Documentation Protocol"
@@ -737,7 +737,7 @@ Writing project: "${projectDescription}"`
     ]
 
     const fallbackProject: Project = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       name: projectName,
       description: projectDescription,
       tasks: fallbackTasks,
@@ -1156,9 +1156,9 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
 
       console.log(`[v0] Successfully generated ${data.subtasks.length} distinct subtasks`)
 
-      // Map AI-generated subtasks to our Task structure
+      // Map AI-generated subtasks to our Task structure - use UUIDs for Supabase
       return data.subtasks.map((subtask: any, index: number) => ({
-        id: `${task.id}_chunk_${index + 1}`,
+        id: crypto.randomUUID(),
         title: subtask.title,
         description: subtask.description,
         focus: subtask.focus || task.focus,
