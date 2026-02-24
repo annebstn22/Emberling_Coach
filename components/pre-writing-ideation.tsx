@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -120,19 +121,15 @@ export default function PreWritingIdeation({
   onLogout: () => void
   onBack: () => void
 }) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const viewFromUrl = (searchParams.get("view") as "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review") || "dashboard"
+  const sessionIdFromUrl = searchParams.get("session")
+
   const [session, setSession] = useState<IdeationSession | null>(null)
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionDescription, setSessionDescription] = useState("")
-  // Load saved view from localStorage on mount
-  const [currentView, setCurrentView] = useState<
-    "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review"
-  >(() => {
-    if (typeof window !== "undefined") {
-      const savedView = localStorage.getItem("ideation-current-view")
-      return (savedView as any) || "dashboard"
-    }
-    return "dashboard"
-  })
+  const [currentView, setCurrentView] = useState(viewFromUrl)
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
   const [currentNotes, setCurrentNotes] = useState("")
@@ -142,6 +139,8 @@ export default function PreWritingIdeation({
   const [sessionUploadedFiles, setSessionUploadedFiles] = useState<UploadedFile[]>([])
 
   const [allSessions, setAllSessions] = useState<IdeationSession[]>([])
+  const justNavigatedRef = useRef(false)
+  const pendingSessionIdRef = useRef<string | null>(null)
 
   // Load sessions from Supabase
   const loadSessionsFromSupabase = async () => {
@@ -209,18 +208,67 @@ export default function PreWritingIdeation({
     }
   }
 
-  // Save current view to localStorage when it changes
+  const navigateToView = (view: typeof currentView, sessionId?: string) => {
+    justNavigatedRef.current = true
+    pendingSessionIdRef.current = sessionId ?? null
+    setCurrentView(view)
+    const params = new URLSearchParams()
+    params.set("view", view)
+    if (sessionId) params.set("session", sessionId)
+    router.replace(`/pre-writing?${params.toString()}`)
+    // Reset refs after URL has had time to update - prevents sync effect from overwriting
+    setTimeout(() => {
+      justNavigatedRef.current = false
+      pendingSessionIdRef.current = null
+    }, 150)
+  }
+
+  // Sync view from URL when it changes (e.g. browser back/forward)
+  // Skip when we've just called navigateToView - avoids race where stale URL overwrites our navigation
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("ideation-current-view", currentView)
+    if (justNavigatedRef.current) return
+    // Don't overwrite session view with non-session view when we have session (stale URL race)
+    const sessionViews = ["ideate", "compare", "ranked", "review"]
+    if (
+      session &&
+      sessionViews.includes(currentView) &&
+      !sessionViews.includes(viewFromUrl) &&
+      !sessionIdFromUrl
+    ) {
+      return
     }
-  }, [currentView])
+    setCurrentView(viewFromUrl)
+    if (!sessionIdFromUrl) {
+      pendingSessionIdRef.current = null
+    }
+  }, [viewFromUrl, sessionIdFromUrl, currentView, session])
+
+  // Load session from allSessions when sessionId is in URL
+  // Don't clear session when we've just navigated to a session - URL may not have updated yet
+  useEffect(() => {
+    if (sessionIdFromUrl && allSessions.length > 0) {
+      pendingSessionIdRef.current = null
+      const found = allSessions.find((s) => s.id === sessionIdFromUrl)
+      if (found) {
+        setSession(found)
+      } else if (
+        ["ideate", "compare", "ranked", "review"].includes(viewFromUrl) &&
+        (!session || session.id !== sessionIdFromUrl)
+      ) {
+        router.replace("/pre-writing")
+      }
+    } else if (!sessionIdFromUrl && !pendingSessionIdRef.current) {
+      setSession(null)
+    }
+  }, [sessionIdFromUrl, allSessions, viewFromUrl, router, session?.id])
 
   useEffect(() => {
     if (user?.id) {
+      console.log("🔄 Pre-writing: User ID changed, loading sessions:", user.id)
       loadSessionsFromSupabase()
     } else {
       // Clear sessions if no user
+      console.log("🔄 Pre-writing: No user, clearing sessions")
       setAllSessions([])
     }
   }, [user?.id])
@@ -356,7 +404,10 @@ export default function PreWritingIdeation({
   }, [session?.isTimerRunning])
 
   const startSession = async () => {
-    if (!sessionTitle.trim()) return
+    if (!sessionTitle.trim()) {
+      alert("Please enter a session title to get started.")
+      return
+    }
 
     const newSession: IdeationSession = {
       id: crypto.randomUUID(), // Use UUID instead of timestamp for better uniqueness
@@ -371,7 +422,7 @@ export default function PreWritingIdeation({
     }
 
     setSession(newSession)
-    setCurrentView("ideate")
+    navigateToView("ideate", newSession.id)
     setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
     
     // Immediately save the new session to Supabase
@@ -466,7 +517,7 @@ export default function PreWritingIdeation({
 
     const updatedSession = { ...session, ideas: rankedIdeas }
     setSession(updatedSession)
-    setCurrentView("ranked")
+    navigateToView("ranked", session.id)
     completeSession(updatedSession)
   }
 
@@ -646,7 +697,7 @@ export default function PreWritingIdeation({
                   </p>
                 </div>
                 <Button
-                  onClick={() => setCurrentView("setup")}
+                  onClick={() => navigateToView("setup")}
                   size="lg"
                   className="bg-white text-amber-600 hover:bg-amber-50"
                 >
@@ -660,7 +711,7 @@ export default function PreWritingIdeation({
           {/* Island of Misfit Ideas Card */}
           <Card
             className="bg-gradient-to-r from-purple-100 to-pink-100 border-purple-200 cursor-pointer hover:shadow-lg transition-all"
-            onClick={() => setCurrentView("island-of-misfits")}
+            onClick={() => navigateToView("island-of-misfits")}
           >
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -700,7 +751,7 @@ export default function PreWritingIdeation({
                       className="hover:shadow-md transition-shadow cursor-pointer"
                       onClick={() => {
                         setSession(s)
-                        setCurrentView(s.isComplete ? "ranked" : "ideate")
+                        navigateToView(s.isComplete ? "ranked" : "ideate", s.id)
                       }}
                     >
                       <CardContent className="p-4">
@@ -714,7 +765,7 @@ export default function PreWritingIdeation({
                             </div>
                             <p className="text-sm text-gray-600 mb-2">{s.description}</p>
                             <div className="flex items-center space-x-4 text-xs text-gray-500">
-                              <span>{s.ideas.length} ideas</span>
+                              <span>{(s.ideas ?? []).length} ideas</span>
                               <span>{new Date(s.createdAt).toLocaleDateString()}</span>
                             </div>
                           </div>
@@ -738,7 +789,7 @@ export default function PreWritingIdeation({
         <div className="bg-white border-b border-orange-200 px-4 py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" onClick={() => setCurrentView("dashboard")}>
+              <Button variant="ghost" size="sm" onClick={() => navigateToView("dashboard")}>
                 <Home className="h-4 w-4 mr-2" />
                 Back to Dashboard
               </Button>
@@ -770,7 +821,7 @@ export default function PreWritingIdeation({
               <h1 className="text-xl font-medium text-gray-800">Pre-Writing Ideation</h1>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={() => setCurrentView("dashboard")} variant="outline" size="sm">
+              <Button onClick={() => navigateToView("dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
                 Back
               </Button>
@@ -837,11 +888,19 @@ export default function PreWritingIdeation({
     )
   }
 
-  // Ideation view
+  // Ideation view - require session
   if (currentView === "ideate") {
+    if (!session) {
+      navigateToView("dashboard")
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+          <div className="text-gray-500">Loading...</div>
+        </div>
+      )
+    }
     const currentCard = STRATEGY_CARDS[currentCardIndex]
-    const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
-    const discardedIdeas = session.ideas.filter((idea) => idea.status === "discarded")
+    const activeIdeas = (session.ideas ?? []).filter((idea) => idea.status === "active")
+    const discardedIdeas = (session.ideas ?? []).filter((idea) => idea.status === "discarded")
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -869,7 +928,7 @@ export default function PreWritingIdeation({
                 onClick={() => {
                   const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
                   if (activeIdeas.length >= 2) {
-                    setCurrentView("compare")
+                    navigateToView("compare", session.id)
                   } else {
                     alert("You need at least 2 active ideas to start ranking")
                   }
@@ -1102,9 +1161,17 @@ export default function PreWritingIdeation({
 
   // Review view
   if (currentView === "review") {
-    const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
-    const selectedIdeas = session.ideas.filter((idea) => idea.status === "selected")
-    const discardedIdeas = session.ideas.filter((idea) => idea.status === "discarded")
+    if (!session) {
+      navigateToView("dashboard")
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+          <div className="text-gray-500">Loading...</div>
+        </div>
+      )
+    }
+    const activeIdeas = (session.ideas ?? []).filter((idea) => idea.status === "active")
+    const selectedIdeas = (session.ideas ?? []).filter((idea) => idea.status === "selected")
+    const discardedIdeas = (session.ideas ?? []).filter((idea) => idea.status === "discarded")
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -1112,10 +1179,10 @@ export default function PreWritingIdeation({
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
-              <Badge variant="outline">{session.ideas.length} total ideas</Badge>
+              <Badge variant="outline">{(session.ideas ?? []).length} total ideas</Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={() => setCurrentView("ideate")} variant="outline" size="sm">
+              <Button onClick={() => navigateToView("ideate", session.id)} variant="outline" size="sm">
                 Continue Ideating
               </Button>
               <Button onClick={() => setSession(null)} variant="outline" size="sm">
@@ -1270,7 +1337,15 @@ export default function PreWritingIdeation({
   }
 
   if (currentView === "compare") {
-    const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
+    if (!session) {
+      navigateToView("dashboard")
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+          <div className="text-gray-500">Loading...</div>
+        </div>
+      )
+    }
+    const activeIdeas = (session.ideas ?? []).filter((idea) => idea.status === "active")
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -1286,9 +1361,7 @@ export default function PreWritingIdeation({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                setCurrentView("ideate")
-              }}
+              onClick={() => navigateToView("ideate", session.id)}
             >
               Back to Ideating
             </Button>
@@ -1303,7 +1376,15 @@ export default function PreWritingIdeation({
   }
 
   if (currentView === "ranked") {
-    const rankedIdeas = [...session.ideas].sort((a, b) => (b.thurstoneScore || 0) - (a.thurstoneScore || 0))
+    if (!session) {
+      navigateToView("dashboard")
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+          <div className="text-gray-500">Loading...</div>
+        </div>
+      )
+    }
+    const rankedIdeas = [...(session.ideas ?? [])].sort((a, b) => (b.thurstoneScore || 0) - (a.thurstoneScore || 0))
 
     console.log(
       "[v0] Rendering ranked view:",
@@ -1326,14 +1407,14 @@ export default function PreWritingIdeation({
               </Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={() => setCurrentView("dashboard")} variant="outline" size="sm">
+              <Button onClick={() => navigateToView("dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
                 Dashboard
               </Button>
               <Button
                 onClick={() => {
                   setSession(null)
-                  setCurrentView("setup")
+                  navigateToView("setup")
                 }}
                 variant="outline"
                 size="sm"

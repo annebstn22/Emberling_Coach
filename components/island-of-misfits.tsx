@@ -80,7 +80,11 @@ export default function IslandOfMisfits({
           attachedFiles: idea.attached_files || undefined,
         }))
 
+        console.log(`✅ Loaded ${formattedIdeas.length} misfit ideas from Supabase`)
         setMisfitIdeas(formattedIdeas)
+      } else {
+        console.log("ℹ️ No misfit ideas found in Supabase")
+        setMisfitIdeas([])
       }
     } catch (error) {
       console.error("Error loading misfit ideas:", error)
@@ -89,7 +93,11 @@ export default function IslandOfMisfits({
 
   useEffect(() => {
     if (user?.id) {
+      console.log("🔄 Misfits: User ID changed, loading misfit ideas:", user.id)
       loadMisfitIdeas()
+    } else {
+      console.log("🔄 Misfits: No user, clearing misfit ideas")
+      setMisfitIdeas([])
     }
   }, [user?.id])
 
