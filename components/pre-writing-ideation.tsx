@@ -1571,35 +1571,9 @@ export default function PreWritingIdeation({
     const activeIdeas = (session.ideas ?? []).filter((idea) => idea.status === "active")
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
-              <Badge className="bg-amber-500">
-                <Layout className="h-3 w-3 mr-1" />
-                Comparative Judgment
-              </Badge>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigateToView("ideate", session.id)}
-              >
-                Back to Ideating
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <div className="max-w-6xl mx-auto p-6">
-          <ComparativeJudgment ideas={activeIdeas} onRankingComplete={handleRankingComplete} />
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="ideation" onLogout={onLogout} />
+        <ComparativeJudgment ideas={activeIdeas} onRankingComplete={handleRankingComplete} />
       </div>
     )
   }

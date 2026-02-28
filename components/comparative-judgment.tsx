@@ -1,9 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { ChevronLeft, ChevronRight, Award } from "lucide-react"
 
 interface IdeaEntry {
   id: string
@@ -85,27 +82,19 @@ function computeThurstoneScores(winMatrix: number[][], n: number): number[] {
 
       if (totalComparisons === 0) continue
 
-      // Empirical probability that i beats j
       let p_ij = winsI / totalComparisons
-
-      // Clamp to [0.01, 0.99] to avoid infinite z-scores
       p_ij = Math.max(0.01, Math.min(0.99, p_ij))
 
-      // Convert to z-score using inverse normal CDF
       const z_ij = inverseNormalCDF(p_ij)
       sumZ += z_ij
       count++
     }
 
-    // μ_i is the mean of all z_ij values
     scores[i] = count > 0 ? sumZ / count : 0
   }
 
-  // Normalize to mean 0
   const mean = scores.reduce((sum, s) => sum + s, 0) / n
-  const normalizedScores = scores.map((s) => s - mean)
-
-  return normalizedScores
+  return scores.map((s) => s - mean)
 }
 
 export default function ComparativeJudgment({
@@ -122,7 +111,6 @@ export default function ComparativeJudgment({
         pairs.push([i, j])
       }
     }
-    // Shuffle pairs for variety
     return pairs.sort(() => Math.random() - 0.5)
   })
 
@@ -138,213 +126,304 @@ export default function ComparativeJudgment({
   const [isComplete, setIsComplete] = useState(false)
 
   const recomputeScores = () => {
-    console.log("[v0] Computing Thurstone scores from win matrix:", winMatrix)
-
     const thurstoneScores = computeThurstoneScores(winMatrix, ideas.length)
-
-    console.log("[v0] Computed Thurstone scores:", thurstoneScores)
-
     const updatedIdeas = currentIdeas.map((idea, idx) => ({
       ...idea,
       thurstoneScore: thurstoneScores[idx],
-      wins: winMatrix[idx].reduce((sum, val) => sum + val, 0), // Total wins for this idea
+      wins: winMatrix[idx].reduce((sum, val) => sum + val, 0),
     }))
-
-    console.log(
-      "[v0] Updated ideas with scores:",
-      updatedIdeas.map((i) => ({
-        content: i.content,
-        wins: i.wins,
-        thurstoneScore: i.thurstoneScore,
-      })),
-    )
-
     setCurrentIdeas(updatedIdeas)
     return updatedIdeas
   }
 
   useEffect(() => {
     if (currentComparisonIndex >= comparisons.length && !isComplete) {
-      console.log("[v0] All comparisons complete, computing final rankings")
       setIsComplete(true)
       const scoredIdeas = recomputeScores()
       const rankedIdeas = [...scoredIdeas].sort((a, b) => (b.thurstoneScore || 0) - (a.thurstoneScore || 0))
-
-      console.log(
-        "[v0] Final rankings:",
-        rankedIdeas.map((idea, idx) => ({
-          rank: idx + 1,
-          content: idea.content,
-          wins: idea.wins,
-          thurstoneScore: idea.thurstoneScore,
-        })),
-      )
-
       onRankingComplete(rankedIdeas)
     }
   }, [currentComparisonIndex, comparisons.length, isComplete])
 
   if (ideas.length < 2) {
     return (
-      <Card className="text-center py-8">
-        <CardContent>
-          <p className="text-gray-600">You need at least 2 ideas to start ranking.</p>
-        </CardContent>
-      </Card>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "3rem 1.5rem",
+          minHeight: "calc(100vh - 57px)",
+        }}
+      >
+        <p
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontStyle: "italic",
+            fontSize: "1rem",
+            color: "var(--muted)",
+          }}
+        >
+          You need at least 2 ideas to start ranking.
+        </p>
+      </div>
     )
   }
 
   if (isComplete || currentComparisonIndex >= comparisons.length) {
     return (
-      <Card className="text-center py-8">
-        <CardContent>
-          <Award className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-          <p className="text-lg font-medium text-gray-800 mb-2">Ranking Complete!</p>
-          <p className="text-gray-600">Your ideas have been ranked based on your comparisons.</p>
-        </CardContent>
-      </Card>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "3rem 1.5rem",
+          minHeight: "calc(100vh - 57px)",
+        }}
+      >
+        <p
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontStyle: "italic",
+            fontSize: "1.8rem",
+            color: "var(--ink)",
+            marginBottom: ".3rem",
+            textAlign: "center",
+          }}
+        >
+          Ranking complete.
+        </p>
+        <p
+          style={{
+            fontSize: ".68rem",
+            color: "var(--muted)",
+            textTransform: "uppercase",
+            letterSpacing: ".12em",
+            textAlign: "center",
+          }}
+        >
+          loading your results…
+        </p>
+      </div>
     )
   }
 
   const [indexA, indexB] = comparisons[currentComparisonIndex]
   const ideaA = currentIdeas[indexA]
   const ideaB = currentIdeas[indexB]
+  const remaining = comparisons.length - currentComparisonIndex
+  const total = comparisons.length
 
   const selectWinner = (winnerIndex: number) => {
-    const [indexA, indexB] = comparisons[currentComparisonIndex]
-
+    const [idxA, idxB] = comparisons[currentComparisonIndex]
     const newWinMatrix = winMatrix.map((row) => [...row])
-    const loserIndex = winnerIndex === indexA ? indexB : indexA
+    const loserIndex = winnerIndex === idxA ? idxB : idxA
     newWinMatrix[winnerIndex][loserIndex]++
     setWinMatrix(newWinMatrix)
-
-    console.log("[v0] Comparison result:", {
-      winner: winnerIndex,
-      loser: loserIndex,
-      winMatrix: newWinMatrix,
-      comparisonIndex: currentComparisonIndex,
-      totalComparisons: comparisons.length,
-    })
 
     const updatedIdeas = [...currentIdeas]
     updatedIdeas[winnerIndex] = {
       ...updatedIdeas[winnerIndex],
       wins: (updatedIdeas[winnerIndex].wins || 0) + 1,
     }
-
     setCurrentIdeas(updatedIdeas)
     setCurrentComparisonIndex(currentComparisonIndex + 1)
   }
 
-  const progress = ((currentComparisonIndex + 1) / comparisons.length) * 100
-
-  const renderFilePreview = (file: any) => {
-    const isImage = file.type.startsWith("image/")
-    const isVideo = file.type.startsWith("video/")
-    const isAudio = file.type.startsWith("audio/")
-
-    if (isImage) {
-      return (
-        <img
-          src={file.url || "/placeholder.svg"}
-          alt={file.name}
-          className="w-full h-48 object-cover rounded-lg mb-3"
-        />
-      )
-    }
-    if (isVideo) {
-      return (
-        <video src={file.url} controls className="w-full h-48 rounded-lg mb-3">
-          Your browser does not support video.
-        </video>
-      )
-    }
-    if (isAudio) {
-      return (
-        <div className="bg-gray-100 p-4 rounded-lg mb-3">
-          <audio src={file.url} controls className="w-full">
-            Your browser does not support audio.
-          </audio>
-        </div>
-      )
-    }
-    return (
-      <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-        📎 {file.name}
-      </a>
-    )
+  const skipPair = () => {
+    setCurrentComparisonIndex(currentComparisonIndex + 1)
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Compare Ideas</span>
-            <Badge variant="outline">
-              {currentComparisonIndex + 1} / {comparisons.length}
-            </Badge>
-          </CardTitle>
-          <p className="text-sm text-gray-600 mt-2">
-            Which idea resonates more with you? Click to choose the stronger one.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div className="bg-amber-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "3rem 1.5rem",
+        minHeight: "calc(100vh - 57px)",
+      }}
+    >
+      {/* Title */}
+      <div
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontStyle: "italic",
+          fontSize: "1.8rem",
+          color: "var(--ink)",
+          marginBottom: ".3rem",
+          textAlign: "center",
+        }}
+      >
+        Which is stronger?
+      </div>
+
+      {/* Sub */}
+      <div
+        style={{
+          fontSize: ".68rem",
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".12em",
+          marginBottom: "2rem",
+          textAlign: "center",
+        }}
+      >
+        pick the idea that matters more — {remaining} left
+      </div>
+
+      {/* Progress dots */}
+      <div
+        style={{
+          display: "flex",
+          gap: ".35rem",
+          marginBottom: "2.5rem",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          maxWidth: "500px",
+        }}
+      >
+        {comparisons.map((_, i) => {
+          const isDone = i < currentComparisonIndex
+          const isActive = i === currentComparisonIndex
+          return (
+            <div
+              key={i}
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                flexShrink: 0,
+                transition: "all .3s",
+                background: isDone || isActive ? "var(--gold)" : "var(--border)",
+                transform: isActive ? "scale(1.5)" : "scale(1)",
+              }}
+            />
+          )
+        })}
+      </div>
+
+      {/* Arena */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: "1rem",
+          alignItems: "center",
+          width: "100%",
+          maxWidth: "640px",
+        }}
+      >
+        {/* Card A */}
+        <button
+          onClick={() => selectWinner(indexA)}
+          style={{
+            background: "var(--surface)",
+            border: "2px solid var(--border)",
+            borderRadius: "14px",
+            padding: "2rem 1.5rem",
+            textAlign: "center",
+            cursor: "pointer",
+            transition: "all .2s cubic-bezier(.22,1,.36,1)",
+            fontFamily: "inherit",
+          }}
+          onMouseEnter={(e) => {
+            const el = e.currentTarget
+            el.style.borderColor = "var(--gold-bdr)"
+            el.style.background = "var(--gold-bg)"
+            el.style.transform = "scale(1.03)"
+            el.style.boxShadow = "0 8px 24px rgba(0,0,0,.08)"
+          }}
+          onMouseLeave={(e) => {
+            const el = e.currentTarget
+            el.style.borderColor = "var(--border)"
+            el.style.background = "var(--surface)"
+            el.style.transform = "scale(1)"
+            el.style.boxShadow = "none"
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: "1.15rem",
+              color: "var(--ink)",
+              lineHeight: "1.4",
+            }}
+          >
+            {ideaA.content}
           </div>
+        </button>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Idea A */}
-            <button onClick={() => selectWinner(indexA)} className="text-left transition-all hover:scale-105">
-              <Card className="cursor-pointer transition-all border-2 hover:border-amber-400 border-gray-200 hover:bg-gray-50 h-full">
-                <CardContent className="p-6">
-                  {ideaA.attachedFiles && ideaA.attachedFiles.length > 0 && (
-                    <div className="mb-3">{renderFilePreview(ideaA.attachedFiles[0])}</div>
-                  )}
+        {/* vs */}
+        <div
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontStyle: "italic",
+            fontSize: "1.3rem",
+            color: "var(--muted)",
+            textAlign: "center",
+          }}
+        >
+          vs
+        </div>
 
-                  <p className="text-lg font-medium text-gray-800 mb-3">{ideaA.content}</p>
-                  {ideaA.notes && <p className="text-sm text-gray-600 italic mb-3">"{ideaA.notes}"</p>}
-
-                  <div className="flex items-center justify-between pt-3 border-t border-gray-200">
-                    <span className="text-xs text-gray-600">Choose this idea</span>
-                    <ChevronRight className="h-4 w-4 text-amber-600" />
-                  </div>
-                </CardContent>
-              </Card>
-            </button>
-
-            {/* Idea B */}
-            <button onClick={() => selectWinner(indexB)} className="text-left transition-all hover:scale-105">
-              <Card className="cursor-pointer transition-all border-2 hover:border-amber-400 border-gray-200 hover:bg-gray-50 h-full">
-                <CardContent className="p-6">
-                  {ideaB.attachedFiles && ideaB.attachedFiles.length > 0 && (
-                    <div className="mb-3">{renderFilePreview(ideaB.attachedFiles[0])}</div>
-                  )}
-
-                  <p className="text-lg font-medium text-gray-800 mb-3">{ideaB.content}</p>
-                  {ideaB.notes && <p className="text-sm text-gray-600 italic mb-3">"{ideaB.notes}"</p>}
-
-                  <div className="flex items-center justify-between pt-3 border-t border-gray-200">
-                    <ChevronLeft className="h-4 w-4 text-amber-600" />
-                    <span className="text-xs text-gray-600">Choose this idea</span>
-                  </div>
-                </CardContent>
-              </Card>
-            </button>
+        {/* Card B */}
+        <button
+          onClick={() => selectWinner(indexB)}
+          style={{
+            background: "var(--surface)",
+            border: "2px solid var(--border)",
+            borderRadius: "14px",
+            padding: "2rem 1.5rem",
+            textAlign: "center",
+            cursor: "pointer",
+            transition: "all .2s cubic-bezier(.22,1,.36,1)",
+            fontFamily: "inherit",
+          }}
+          onMouseEnter={(e) => {
+            const el = e.currentTarget
+            el.style.borderColor = "var(--gold-bdr)"
+            el.style.background = "var(--gold-bg)"
+            el.style.transform = "scale(1.03)"
+            el.style.boxShadow = "0 8px 24px rgba(0,0,0,.08)"
+          }}
+          onMouseLeave={(e) => {
+            const el = e.currentTarget
+            el.style.borderColor = "var(--border)"
+            el.style.background = "var(--surface)"
+            el.style.transform = "scale(1)"
+            el.style.boxShadow = "none"
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-serif)",
+              fontSize: "1.15rem",
+              color: "var(--ink)",
+              lineHeight: "1.4",
+            }}
+          >
+            {ideaB.content}
           </div>
-        </CardContent>
-      </Card>
+        </button>
+      </div>
 
-      <Card className="bg-blue-50 border-blue-200">
-        <CardContent className="p-4">
-          <p className="text-sm text-blue-800">
-            <strong>Thurstone's Comparative Judgment</strong> uses pairwise comparisons to compute interval-scaled
-            scores for each idea. This statistical method (Case V) produces more reliable and meaningful rankings than
-            simple vote counting.
-          </p>
-        </CardContent>
-      </Card>
+      {/* Skip */}
+      <button
+        onClick={skipPair}
+        style={{
+          background: "none",
+          border: "none",
+          fontFamily: "var(--font-mono)",
+          fontSize: ".68rem",
+          color: "var(--muted)",
+          cursor: "pointer",
+          textDecoration: "underline",
+          marginTop: "1.5rem",
+        }}
+      >
+        skip this pair →
+      </button>
     </div>
   )
 }
