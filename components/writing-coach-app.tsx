@@ -2170,15 +2170,33 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
 
             {/* Current Task */}
             <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Target className="h-5 w-5 text-blue-600" />
-                    <CardTitle className="text-xl">{currentTask?.title}</CardTitle>
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <h2
+                      className="mb-1 leading-tight"
+                      style={{
+                        fontFamily: 'var(--font-serif)',
+                        fontSize: '2rem',
+                        fontWeight: 300,
+                        color: 'var(--ink)',
+                      }}
+                    >
+                      <em>{currentTask?.title}</em>
+                    </h2>
+                    <p
+                      style={{
+                        fontSize: '0.7rem',
+                        color: 'var(--muted)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.12em',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      {currentTask?.focus} · {currentTask?.suggestedDuration}min suggested
+                    </p>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="secondary">{currentTask?.focus}</Badge>
-                  </div>
+                  <Badge variant="secondary" className="flex-shrink-0 mt-1">{currentTask?.focus}</Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">

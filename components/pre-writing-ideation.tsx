@@ -1029,9 +1029,9 @@ export default function PreWritingIdeation({
           {/* Session name row */}
           <div className="flex items-center gap-3 mb-8">
             <span 
-              className="text-xs uppercase whitespace-nowrap"
+              className="uppercase whitespace-nowrap"
               style={{ 
-                fontSize: '0.58rem',
+                fontSize: '0.75rem',
                 color: 'var(--muted)',
                 letterSpacing: '0.1em',
                 fontFamily: 'var(--font-mono)'

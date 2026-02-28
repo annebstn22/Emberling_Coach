@@ -642,10 +642,27 @@ export default function ThreaderApp({
 
         <div className="max-w-[600px] mx-auto px-6 py-12 space-y-6">
           <div>
-            <h2 className="text-2xl font-light text-gray-800 mb-1">
+            <h2
+              className="mb-1"
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: '2.2rem',
+                fontWeight: 300,
+                color: 'var(--ink)',
+              }}
+            >
               <em>What do you need to cover?</em>
             </h2>
-            <p className="text-sm text-gray-600 uppercase tracking-wide mb-4">
+            <p
+              className="mb-4"
+              style={{
+                fontSize: '0.7rem',
+                color: 'var(--muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
               type each point — get the best order, with reasoning
             </p>
 
