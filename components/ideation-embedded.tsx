@@ -21,6 +21,16 @@ const STRATEGY_CARDS = [
   "What would make someone tear this apart?",
 ]
 
+// Shuffle array function (Fisher-Yates)
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
+}
+
 export default function IdeationEmbedded({
   onIdeasChange,
   onFeedToThreader,
@@ -34,6 +44,8 @@ export default function IdeationEmbedded({
   isCollapsed?: boolean
   onToggleCollapse?: () => void
 }) {
+  // Shuffle cards once on mount
+  const [shuffledCards] = useState(() => shuffleArray(STRATEGY_CARDS))
   const [currentPrompt, setCurrentPrompt] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
   const [internalCollapsed, setInternalCollapsed] = useState(false)
@@ -55,7 +67,7 @@ export default function IdeationEmbedded({
   }
 
   const cyclePrompt = () => {
-    setCurrentPrompt((prev) => (prev + 1) % STRATEGY_CARDS.length)
+    setCurrentPrompt((prev) => (prev + 1) % shuffledCards.length)
   }
 
   const addIdea = () => {
@@ -150,8 +162,15 @@ export default function IdeationEmbedded({
         <div className="text-[0.52rem] opacity-38 uppercase tracking-wider mb-1.5">
           Thinking card — click for a new one
         </div>
-        <div className="font-serif italic text-sm leading-snug opacity-100 transition-opacity duration-300">
-          {STRATEGY_CARDS[currentPrompt]}
+        <div 
+          className="font-serif italic leading-snug opacity-100 transition-opacity duration-300"
+          style={{
+            fontSize: '1.25rem',
+            fontWeight: 300,
+            lineHeight: 1.4,
+          }}
+        >
+          {shuffledCards[currentPrompt]}
         </div>
         <div className="text-[0.5rem] opacity-22 self-end mt-1">click for next →</div>
       </div>

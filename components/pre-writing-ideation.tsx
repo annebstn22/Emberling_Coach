@@ -147,6 +147,16 @@ const STRATEGY_CARDS: StrategyCard[] = [
   { id: "52", text: "Write me a beautiful lie", category: "reframe", difficulty: "hard" },
 ]
 
+// Shuffle array function (Fisher-Yates)
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  return shuffled
+}
+
 export default function PreWritingIdeation({
   user,
   onLogout,
@@ -175,6 +185,8 @@ export default function PreWritingIdeation({
       : viewFromUrl || "ideate" // Default to ideate if no view specified
   const [currentView, setCurrentView] = useState(initialView)
   const [isLoadingSession, setIsLoadingSession] = useState(!!sessionIdFromUrl)
+  // Shuffle cards once on mount
+  const [shuffledCards] = useState(() => shuffleArray(STRATEGY_CARDS))
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [promptTextVisible, setPromptTextVisible] = useState(true)
   const [currentIdea, setCurrentIdea] = useState("")
@@ -592,8 +604,8 @@ export default function PreWritingIdeation({
     const newIdea: IdeaEntry = {
       id: crypto.randomUUID(),
       content: currentIdea,
-      cardId: STRATEGY_CARDS[currentCardIndex].id,
-      cardText: STRATEGY_CARDS[currentCardIndex].text,
+      cardId: shuffledCards[currentCardIndex].id,
+      cardText: shuffledCards[currentCardIndex].text,
       notes: currentNotes,
       timestamp: new Date(),
       status: "active",
@@ -613,8 +625,8 @@ export default function PreWritingIdeation({
   }
 
   const newCard = () => {
-    // Cycle to next card (not random, just increment)
-    setCurrentCardIndex((prev) => (prev + 1) % STRATEGY_CARDS.length)
+    // Cycle to next card in shuffled order
+    setCurrentCardIndex((prev) => (prev + 1) % shuffledCards.length)
     setCurrentIdea("")
     setCurrentNotes("")
   }
@@ -991,7 +1003,7 @@ export default function PreWritingIdeation({
       )
     }
     // Use session if it exists, otherwise use empty state (session will be created by useEffect)
-    const currentCard = STRATEGY_CARDS[currentCardIndex]
+    const currentCard = shuffledCards[currentCardIndex]
     const activeIdeas = session ? (session.ideas ?? []).filter((idea) => idea.status === "active") : []
     const showRankTrigger = activeIdeas.length >= 3
 
