@@ -32,6 +32,7 @@ interface ThreaderProject {
   orderedPoints?: string[]
   bridges?: string[]
   orderingResult?: ThreaderResponse
+  coachProjectId?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -129,6 +130,7 @@ export default function ThreaderApp({
             orderingResult: orderingResult,
             orderedPoints: orderingResult?.best_ordering?.ordered_points,
             bridges: orderingResult?.best_ordering?.bridges,
+            coachProjectId: p.coach_project_id,
             createdAt: new Date(p.created_at),
             updatedAt: new Date(p.updated_at),
           }
@@ -498,10 +500,15 @@ export default function ThreaderApp({
                             <h3 className="font-semibold text-gray-800 mb-2">
                               {project.title || "Untitled thread"}
                             </h3>
-                            <div className="flex items-center space-x-4 text-xs text-gray-500">
+                            <div className="flex items-center space-x-4 text-xs text-gray-500 mb-1">
                               <span>{project.points.length} points</span>
                               <span>{new Date(project.createdAt).toLocaleDateString()}</span>
                             </div>
+                            {project.coachProjectId && (
+                              <div className="text-xs text-blue-600 mt-1">
+                                ↳ from Writing Coach project
+                              </div>
+                            )}
                           </div>
                           <ChevronRight className="h-5 w-5 text-gray-400" />
                         </div>

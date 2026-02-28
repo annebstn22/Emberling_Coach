@@ -37,11 +37,14 @@ import {
   User,
   Gamepad2,
   LogOut,
+  Sparkles,
+  X,
 } from "lucide-react"
 
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import type { User } from "@supabase/supabase-js"
+import ThreaderEmbedded from "./threader-embedded"
 
 type CoachMode = "normal" | "baymax" | "edna"
 
@@ -129,6 +132,13 @@ export default function WritingCoachApp({
 
   const [isChunking, setIsChunking] = useState(false)
   const [feedbackPointsChecked, setFeedbackPointsChecked] = useState<boolean[]>([])
+  const [threadSessions, setThreadSessions] = useState<Array<{ 
+    id: string
+    supabaseId?: string
+    title: string
+    points: string[]
+    orderingResult?: any
+  }>>([])
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
 
@@ -138,6 +148,16 @@ export default function WritingCoachApp({
     const points = task?.actionablePoints ?? []
     setFeedbackPointsChecked(points.map(() => false))
   }, [currentProject?.id, currentProject?.currentTaskIndex])
+
+  // Load thread sessions for current task when task changes
+  useEffect(() => {
+    if (currentProject?.id && user?.id) {
+      loadThreadSessionsForTask()
+    } else {
+      setThreadSessions([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProject?.id, currentProject?.currentTaskIndex, user?.id])
 
   // Load projects from Supabase when user is available
   useEffect(() => {
@@ -212,6 +232,141 @@ export default function WritingCoachApp({
       }
     } catch (error) {
       console.error("Error loading projects:", error)
+    }
+  }
+
+  // Load thread sessions for current task
+  const loadThreadSessionsForTask = async () => {
+    if (!user?.id || !currentProject?.id) return
+
+    try {
+      const { data: threaderProjects, error } = await supabase
+        .from("threader_projects")
+        .select("*, threader_items(*)")
+        .eq("user_id", user.id)
+        .eq("coach_project_id", currentProject.id)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error loading thread sessions:", error)
+        return
+      }
+
+      if (threaderProjects) {
+        const task = currentProject?.tasks[currentProject?.currentTaskIndex ?? 0]
+        const taskTitle = task?.title || "Current Task"
+        const taskIndex = (currentProject?.currentTaskIndex ?? 0) + 1
+        
+        // Filter and format thread sessions for current task
+        const formattedSessions = threaderProjects
+          .filter((p: any) => {
+            // Check if title contains task title or task number to match to current task
+            const title = p.title || ""
+            return title.includes(taskTitle) || 
+                   title.includes(`Task ${taskIndex}`) ||
+                   title.includes(`Thread`)
+          })
+          .map((p: any) => {
+            const items = (p.threader_items || [])
+              .sort((a: any, b: any) => a.original_index - b.original_index)
+              .map((item: any) => item.content)
+
+            let orderingResult: any = undefined
+            if (p.ordering_result) {
+              try {
+                orderingResult = typeof p.ordering_result === 'string' 
+                  ? JSON.parse(p.ordering_result) 
+                  : p.ordering_result
+              } catch (e) {
+                console.error("Error parsing ordering_result:", e)
+              }
+            }
+
+            return {
+              id: p.id,
+              supabaseId: p.id,
+              title: p.title,
+              points: items,
+              orderingResult: orderingResult,
+            }
+          })
+
+        setThreadSessions(formattedSessions)
+      }
+    } catch (error) {
+      console.error("Error loading thread sessions:", error)
+    }
+  }
+
+  // Save thread session to Supabase
+  const saveThreadSessionToSupabase = async (
+    sessionId: string,
+    title: string,
+    points: string[],
+    orderingResult?: any
+  ) => {
+    if (!user?.id || !currentProject?.id) return
+
+    try {
+      // Convert points to ThreaderPoint format
+      const threaderPoints = points.map((text, idx) => ({
+        id: crypto.randomUUID(),
+        text,
+        originalIndex: idx,
+      }))
+
+      // Upsert threader project
+      const { data: threaderProject, error: projectError } = await supabase
+        .from("threader_projects")
+        .upsert(
+          {
+            id: sessionId,
+            user_id: user.id,
+            title: title || `Thread from ${currentProject.name}`,
+            coach_project_id: currentProject.id,
+            ordering_result: orderingResult || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        )
+        .select()
+        .single()
+
+      if (projectError) {
+        console.error("Error saving thread session:", projectError)
+        return
+      }
+
+      // Delete existing items
+      await supabase.from("threader_items").delete().eq("project_id", sessionId)
+
+      // Insert new items
+      if (threaderPoints.length > 0) {
+        const itemsToInsert = threaderPoints.map((point, idx) => {
+          // Find order_index if we have ordering result
+          let orderIndex = null
+          if (orderingResult?.best_ordering?.ordered_points) {
+            const orderIdx = orderingResult.best_ordering.ordered_points.findIndex(
+              (p: string) => p === point.text
+            )
+            orderIndex = orderIdx >= 0 ? orderIdx : null
+          }
+
+          return {
+            project_id: sessionId,
+            content: point.text,
+            original_index: point.originalIndex,
+            order_index: orderIndex,
+          }
+        })
+
+        await supabase.from("threader_items").insert(itemsToInsert)
+      }
+
+      // Reload thread sessions to reflect changes
+      await loadThreadSessionsForTask()
+    } catch (error) {
+      console.error("Error saving thread session:", error)
     }
   }
 
@@ -1852,6 +2007,126 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                     </div>
                   </div>
                 </div>
+
+                {/* Tool Row */}
+                <div className="flex gap-2 flex-wrap mb-4">
+                  <button
+                    onClick={async () => {
+                      const sessionId = crypto.randomUUID()
+                      const task = currentProject?.tasks[currentProject?.currentTaskIndex ?? 0]
+                      const taskTitle = task?.title || "Current Task"
+                      const newSession = {
+                        id: sessionId,
+                        supabaseId: sessionId,
+                        title: `${taskTitle} — Thread ${threadSessions.length + 1}`,
+                        points: [],
+                      }
+                      setThreadSessions([...threadSessions, newSession])
+                      // Save to Supabase
+                      await saveThreadSessionToSupabase(sessionId, newSession.title, [])
+                    }}
+                    className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 hover:border-[#a8c8e8] hover:text-[#1a4a6e] transition-all"
+                  >
+                    <Sparkles className="h-4 w-4 text-[#1a4a6e]" />
+                    <span>🧵 Add thread session</span>
+                  </button>
+                </div>
+
+                {/* Thread Sessions List */}
+                {threadSessions.length > 0 && (
+                  <div className="space-y-4 mb-4">
+                    {threadSessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className="bg-white border border-gray-200 rounded-lg overflow-hidden"
+                      >
+                        <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
+                          <span className="text-sm font-medium text-gray-700">
+                            🧵 {session.title}
+                          </span>
+                          <button
+                            onClick={async () => {
+                              // Delete from Supabase if it exists
+                              if (session.supabaseId) {
+                                await supabase
+                                  .from("threader_projects")
+                                  .delete()
+                                  .eq("id", session.supabaseId)
+                                // Reload to sync with Supabase
+                                await loadThreadSessionsForTask()
+                              } else {
+                                // Just remove from local state if not saved
+                                setThreadSessions(threadSessions.filter((s) => s.id !== session.id))
+                              }
+                            }}
+                            className="text-xs text-gray-500 hover:text-red-600 transition-colors px-2 py-1 rounded hover:bg-red-50"
+                          >
+                            delete
+                          </button>
+                        </div>
+                        <div className="p-4">
+                          <ThreaderEmbedded
+                            initialPoints={session.points}
+                            onPointsChange={async (points) => {
+                              // Update session with new points
+                              const updatedSession = { ...session, points }
+                              setThreadSessions(
+                                threadSessions.map((s) =>
+                                  s.id === session.id ? updatedSession : s
+                                )
+                              )
+                              // Auto-save to Supabase (always save, even if new session)
+                              const sessionId = session.supabaseId || session.id
+                              await saveThreadSessionToSupabase(
+                                sessionId,
+                                session.title,
+                                points,
+                                session.orderingResult
+                              )
+                              // Update supabaseId if it was a new session
+                              if (!session.supabaseId) {
+                                setThreadSessions(
+                                  threadSessions.map((s) =>
+                                    s.id === session.id ? { ...updatedSession, supabaseId: sessionId } : s
+                                  )
+                                )
+                              }
+                            }}
+                            onOrderingComplete={async (orderedPoints, bridges, orderingResult) => {
+                              // Update session with ordered points and result
+                              const updatedSession = {
+                                ...session,
+                                points: orderedPoints,
+                                orderingResult,
+                              }
+                              setThreadSessions(
+                                threadSessions.map((s) =>
+                                  s.id === session.id ? updatedSession : s
+                                )
+                              )
+                              // Save to Supabase (always save, even if new session)
+                              const sessionId = session.supabaseId || session.id
+                              await saveThreadSessionToSupabase(
+                                sessionId,
+                                session.title,
+                                orderedPoints,
+                                orderingResult
+                              )
+                              // Update supabaseId if it was a new session
+                              if (!session.supabaseId) {
+                                setThreadSessions(
+                                  threadSessions.map((s) =>
+                                    s.id === session.id ? { ...updatedSession, supabaseId: sessionId } : s
+                                  )
+                                )
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Work Area */}
                 <div>
