@@ -31,6 +31,9 @@ function DashboardContent() {
   const [coachProjects, setCoachProjects] = useState<DashboardProject[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: "ideation" | "threader" | "coach"; id: string; name: string } | null>(null)
+  const [visibleCoach, setVisibleCoach] = useState(9)
+  const [visibleIdeation, setVisibleIdeation] = useState(9)
+  const [visibleThreader, setVisibleThreader] = useState(9)
 
   useEffect(() => {
     if (user?.id) {
@@ -175,6 +178,12 @@ function DashboardContent() {
   const filteredThreader = filterProjects(threaderProjects, searchQuery)
   const filteredCoach = filterProjects(coachProjects, searchQuery)
 
+  // When searching, show all matching results; otherwise apply pagination
+  const isSearching = searchQuery.trim().length > 0
+  const visibleCoachItems = isSearching ? filteredCoach : filteredCoach.slice(0, visibleCoach)
+  const visibleIdeationItems = isSearching ? filteredIdeation : filteredIdeation.slice(0, visibleIdeation)
+  const visibleThreaderItems = isSearching ? filteredThreader : filteredThreader.slice(0, visibleThreader)
+
   const handleProjectClick = (project: DashboardProject, e?: React.MouseEvent) => {
     // Don't navigate if clicking the delete button
     if (e && (e.target as HTMLElement).closest('.delete-btn')) {
@@ -264,8 +273,28 @@ function DashboardContent() {
 
       {/* Main Content */}
       <div className="max-w-[860px] mx-auto px-6 py-12">
-        <h2 className="font-serif text-3xl font-light text-[#1a1814] mb-1">My Projects</h2>
-        <p className="text-xs text-[#9a948a] uppercase tracking-wider mb-6">
+        <h2
+          style={{
+            fontFamily: 'var(--font-serif)',
+            fontStyle: 'italic',
+            fontSize: '2.2rem',
+            fontWeight: 300,
+            color: 'var(--ink)',
+            marginBottom: '.3rem',
+          }}
+        >
+          My Projects
+        </h2>
+        <p
+          style={{
+            fontSize: '0.7rem',
+            color: 'var(--muted)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+            marginBottom: '2rem',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
           all your saved work — click any card to open
         </p>
 
@@ -289,7 +318,7 @@ function DashboardContent() {
             {filteredCoach.length === 0 ? (
               <div className="font-serif italic text-sm text-[#9a948a] py-1">No projects yet.</div>
             ) : (
-              filteredCoach.map((project) => (
+              visibleCoachItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -318,6 +347,14 @@ function DashboardContent() {
               + New writing project
             </button>
           </div>
+          {!isSearching && filteredCoach.length > visibleCoach && (
+            <button
+              onClick={() => setVisibleCoach((v) => v + 9)}
+              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+            >
+              Show {Math.min(9, filteredCoach.length - visibleCoach)} more →
+            </button>
+          )}
         </div>
 
         {/* Ideation Sessions */}
@@ -329,7 +366,7 @@ function DashboardContent() {
             {filteredIdeation.length === 0 ? (
               <div className="font-serif italic text-sm text-[#9a948a] py-1">No sessions yet.</div>
             ) : (
-              filteredIdeation.map((project) => (
+              visibleIdeationItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -361,6 +398,14 @@ function DashboardContent() {
               + New ideation session
             </button>
           </div>
+          {!isSearching && filteredIdeation.length > visibleIdeation && (
+            <button
+              onClick={() => setVisibleIdeation((v) => v + 9)}
+              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+            >
+              Show {Math.min(9, filteredIdeation.length - visibleIdeation)} more →
+            </button>
+          )}
         </div>
 
         {/* Threader Projects */}
@@ -372,7 +417,7 @@ function DashboardContent() {
             {filteredThreader.length === 0 ? (
               <div className="font-serif italic text-sm text-[#9a948a] py-1">No threads yet.</div>
             ) : (
-              filteredThreader.map((project) => (
+              visibleThreaderItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -404,6 +449,14 @@ function DashboardContent() {
               + New thread
             </button>
           </div>
+          {!isSearching && filteredThreader.length > visibleThreader && (
+            <button
+              onClick={() => setVisibleThreader((v) => v + 9)}
+              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+            >
+              Show {Math.min(9, filteredThreader.length - visibleThreader)} more →
+            </button>
+          )}
         </div>
       </div>
 

@@ -3,12 +3,6 @@
 import { useState, useEffect } from "react"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { ArchiveRestore, Trash2, Plus, Search, Calendar, Archive, Heart, Filter } from "lucide-react"
 
 interface MisfitIdea {
   id: string
@@ -22,16 +16,6 @@ interface MisfitIdea {
   attachedFiles?: any[]
 }
 
-const SUGGESTED_TAGS = [
-  "experimental",
-  "risky",
-  "unconventional",
-  "simplistic",
-  "too-complex",
-  "metaphorical",
-  "absurd",
-]
-
 export default function IslandOfMisfits({
   user,
   onMisfitImport,
@@ -40,21 +24,10 @@ export default function IslandOfMisfits({
   onMisfitImport?: (idea: MisfitIdea) => void
 }) {
   const [misfitIdeas, setMisfitIdeas] = useState<MisfitIdea[]>([])
-  const [showForm, setShowForm] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
-  const [selectedTags, setSelectedTags] = useState<string[]>([])
-  const [newIdea, setNewIdea] = useState({
-    content: "",
-    notes: "",
-    tags: [] as string[],
-    reasonDiscarded: "",
-  })
-  const [newTag, setNewTag] = useState("")
 
-  // Load misfit ideas from Supabase
   const loadMisfitIdeas = async () => {
     if (!user?.id) return
-
     try {
       const { data, error } = await supabase
         .from("misfit_ideas")
@@ -62,29 +35,20 @@ export default function IslandOfMisfits({
         .eq("user_id", user.id)
         .order("discarded_at", { ascending: false })
 
-      if (error) {
-        console.error("Error loading misfit ideas:", error)
-        return
-      }
-
-      if (data) {
-        const formattedIdeas: MisfitIdea[] = data.map((idea: any) => ({
-          id: idea.id,
-          content: idea.content,
-          notes: idea.notes,
-          tags: idea.tags || [],
-          reasonDiscarded: idea.reason_discarded,
-          originalSessionTitle: idea.original_session_title || undefined,
-          discardedAt: new Date(idea.discarded_at),
-          rediscoveredIn: idea.rediscovered_in || undefined,
-          attachedFiles: idea.attached_files || undefined,
-        }))
-
-        console.log(`✅ Loaded ${formattedIdeas.length} misfit ideas from Supabase`)
-        setMisfitIdeas(formattedIdeas)
-      } else {
-        console.log("ℹ️ No misfit ideas found in Supabase")
-        setMisfitIdeas([])
+      if (!error && data) {
+        setMisfitIdeas(
+          data.map((idea: any) => ({
+            id: idea.id,
+            content: idea.content,
+            notes: idea.notes,
+            tags: idea.tags || [],
+            reasonDiscarded: idea.reason_discarded,
+            originalSessionTitle: idea.original_session_title || undefined,
+            discardedAt: new Date(idea.discarded_at),
+            rediscoveredIn: idea.rediscovered_in || undefined,
+            attachedFiles: idea.attached_files || undefined,
+          }))
+        )
       }
     } catch (error) {
       console.error("Error loading misfit ideas:", error)
@@ -92,373 +56,206 @@ export default function IslandOfMisfits({
   }
 
   useEffect(() => {
-    if (user?.id) {
-      console.log("🔄 Misfits: User ID changed, loading misfit ideas:", user.id)
-      loadMisfitIdeas()
-    } else {
-      console.log("🔄 Misfits: No user, clearing misfit ideas")
-      setMisfitIdeas([])
-    }
+    if (user?.id) loadMisfitIdeas()
+    else setMisfitIdeas([])
   }, [user?.id])
-
-  const saveMisfits = async (ideas: MisfitIdea[]) => {
-    setMisfitIdeas(ideas)
-    // Individual saves are handled by add/remove functions
-  }
-
-  const addMisfitIdea = async () => {
-    if (!newIdea.content.trim() || !user?.id) return
-
-    try {
-      const ideaId = crypto.randomUUID()
-      const ideaData = {
-        id: ideaId,
-        user_id: user.id,
-        content: newIdea.content,
-        notes: newIdea.notes,
-        tags: newIdea.tags,
-        reason_discarded: newIdea.reasonDiscarded,
-        discarded_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-      }
-
-      const { error } = await supabase.from("misfit_ideas").insert(ideaData)
-
-      if (error) {
-        console.error("Error adding misfit idea:", error)
-        return
-      }
-
-      const idea: MisfitIdea = {
-        id: ideaId,
-        content: newIdea.content,
-        notes: newIdea.notes,
-        tags: newIdea.tags,
-        reasonDiscarded: newIdea.reasonDiscarded,
-        discardedAt: new Date(),
-      }
-
-      setMisfitIdeas([...misfitIdeas, idea])
-      setNewIdea({ content: "", notes: "", tags: [], reasonDiscarded: "" })
-      setShowForm(false)
-    } catch (error) {
-      console.error("Error adding misfit idea:", error)
-    }
-  }
 
   const removeMisfitIdea = async (id: string) => {
     try {
-      const { error } = await supabase.from("misfit_ideas").delete().eq("id", id)
-
-      if (error) {
-        console.error("Error removing misfit idea:", error)
-        return
-      }
-
-      setMisfitIdeas(misfitIdeas.filter((idea) => idea.id !== id))
+      await supabase.from("misfit_ideas").delete().eq("id", id)
+      setMisfitIdeas((prev) => prev.filter((i) => i.id !== id))
     } catch (error) {
       console.error("Error removing misfit idea:", error)
     }
   }
 
-  const toggleTag = (tag: string) => {
-    if (newIdea.tags.includes(tag)) {
-      setNewIdea({ ...newIdea, tags: newIdea.tags.filter((t) => t !== tag) })
-    } else {
-      setNewIdea({ ...newIdea, tags: [...newIdea.tags, tag] })
-    }
-  }
-
-  const addCustomTag = () => {
-    if (newTag.trim() && !newIdea.tags.includes(newTag.trim())) {
-      setNewIdea({ ...newIdea, tags: [...newIdea.tags, newTag.trim()] })
-      setNewTag("")
-    }
-  }
-
-  const toggleFilterTag = (tag: string) => {
-    if (selectedTags.includes(tag)) {
-      setSelectedTags(selectedTags.filter((t) => t !== tag))
-    } else {
-      setSelectedTags([...selectedTags, tag])
-    }
-  }
-
   const filteredIdeas = misfitIdeas.filter((idea) => {
-    const matchesSearch =
-      idea.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      idea.notes.toLowerCase().includes(searchTerm.toLowerCase())
-
-    const matchesTags = selectedTags.length === 0 || selectedTags.some((tag) => idea.tags.includes(tag))
-
-    return matchesSearch && matchesTags
+    if (!searchTerm) return true
+    const q = searchTerm.toLowerCase()
+    return (
+      idea.content.toLowerCase().includes(q) ||
+      (idea.originalSessionTitle || "").toLowerCase().includes(q)
+    )
   })
 
-  const allTags = Array.from(new Set(misfitIdeas.flatMap((idea) => idea.tags)))
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-gray-800 flex items-center space-x-2 mb-2">
-              <Archive className="h-6 w-6 text-purple-600" />
-              <span>Island of Misfit Ideas</span>
-            </h2>
-            <p className="text-gray-600 text-sm">
-              A sanctuary for ideas that didn't fit this session but might spark something brilliant later. Every great
-              idea starts as a misfit.
-            </p>
-          </div>
-          <Button
-            onClick={() => setShowForm(!showForm)}
-            className="bg-purple-600 hover:bg-purple-700 whitespace-nowrap"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Misfit
-          </Button>
+    <div style={{ width: "100%", maxWidth: "640px", margin: "0 auto", padding: "3rem 1.5rem" }}>
+      {/* Title */}
+      <h2
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontSize: "2rem",
+          fontWeight: 300,
+          color: "var(--ink)",
+          marginBottom: ".3rem",
+        }}
+      >
+        🏝 <em>Island of Misfit Ideas</em>
+      </h2>
+
+      {/* Sub */}
+      <p
+        style={{
+          fontSize: ".68rem",
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".12em",
+          marginBottom: ".5rem",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        ideas that didn't make the cut — yet
+      </p>
+
+      {/* Desc */}
+      <p
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontStyle: "italic",
+          fontSize: ".93rem",
+          color: "var(--muted)",
+          marginBottom: "2rem",
+          lineHeight: 1.5,
+        }}
+      >
+        Every idea you exile during ranking ends up here. Searchable across all your sessions.
+        The right project hasn't arrived for them yet.
+      </p>
+
+      {/* Search */}
+      <input
+        type="text"
+        placeholder="search exiled ideas…"
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        style={{
+          width: "100%",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "8px",
+          padding: ".68rem 1rem",
+          fontFamily: "var(--font-mono)",
+          fontSize: ".85rem",
+          color: "var(--ink)",
+          outline: "none",
+          marginBottom: "1.5rem",
+          transition: "border-color .2s",
+        }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = "var(--border2)" }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)" }}
+      />
+
+      {/* List */}
+      {filteredIdeas.length === 0 ? (
+        <div
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontStyle: "italic",
+            color: "var(--muted)",
+            fontSize: ".93rem",
+            padding: "2rem 0",
+            textAlign: "center",
+          }}
+        >
+          {misfitIdeas.length === 0
+            ? "No exiled ideas yet. They'll appear here when you exile them during ranking."
+            : "No ideas match your search."}
         </div>
-      </div>
-
-      {/* Add Misfit Idea Form */}
-      {showForm && (
-        <Card className="border-purple-200 bg-purple-50">
-          <CardHeader>
-            <CardTitle className="text-lg">Preserve a Misfit Idea</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">The Idea</label>
-              <Textarea
-                placeholder="What's the idea that didn't make the cut this time?"
-                value={newIdea.content}
-                onChange={(e) => setNewIdea({ ...newIdea, content: e.target.value })}
-                className="min-h-20"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Why Was It Discarded?</label>
-              <Input
-                placeholder="e.g., Too experimental, Wrong tone for this project, Needs more development"
-                value={newIdea.reasonDiscarded}
-                onChange={(e) => setNewIdea({ ...newIdea, reasonDiscarded: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Notes & Context</label>
-              <Textarea
-                placeholder="Any additional context or why you think this might be useful later?"
-                value={newIdea.notes}
-                onChange={(e) => setNewIdea({ ...newIdea, notes: e.target.value })}
-                className="min-h-16"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">Tags</label>
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTED_TAGS.map((tag) => (
-                    <Badge
-                      key={tag}
-                      variant={newIdea.tags.includes(tag) ? "default" : "outline"}
-                      className="cursor-pointer hover:bg-purple-200"
-                      onClick={() => toggleTag(tag)}
-                    >
-                      {tag}
-                    </Badge>
-                  ))}
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+          {filteredIdeas.map((idea) => (
+            <div
+              key={idea.id}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "1rem",
+                padding: ".85rem 1.1rem",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderLeft: "3px solid #d4b4b4",
+                borderRadius: "8px",
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: ".88rem",
+                    color: "var(--ink2)",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {idea.content}
                 </div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Add custom tag..."
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && addCustomTag()}
-                    className="flex-1"
-                  />
-                  <Button onClick={addCustomTag} variant="outline" size="sm">
-                    Add
-                  </Button>
-                </div>
-                {newIdea.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {newIdea.tags.map((tag) => (
-                      <Badge
-                        key={tag}
-                        variant="secondary"
-                        className="cursor-pointer hover:bg-red-200"
-                        onClick={() => toggleTag(tag)}
-                      >
-                        {tag} ×
-                      </Badge>
-                    ))}
+                {idea.originalSessionTitle && (
+                  <div
+                    style={{
+                      fontSize: ".6rem",
+                      color: "var(--muted)",
+                      marginTop: ".2rem",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    from "{idea.originalSessionTitle}"
                   </div>
                 )}
               </div>
-            </div>
 
-            <div className="flex gap-2 pt-4">
-              <Button
-                onClick={addMisfitIdea}
-                disabled={!newIdea.content.trim()}
-                className="flex-1 bg-purple-600 hover:bg-purple-700"
+              {/* Rescue */}
+              <button
+                onClick={() => {
+                  onMisfitImport?.(idea)
+                  removeMisfitIdea(idea.id)
+                }}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--border)",
+                  borderRadius: "5px",
+                  padding: ".25rem .6rem",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: ".62rem",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  transition: "all .15s",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "var(--green-bdr)"
+                  e.currentTarget.style.color = "var(--green)"
+                  e.currentTarget.style.background = "var(--green-bg)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border)"
+                  e.currentTarget.style.color = "var(--muted)"
+                  e.currentTarget.style.background = "none"
+                }}
               >
-                <Archive className="h-4 w-4 mr-2" />
-                Save to Island
-              </Button>
-              <Button onClick={() => setShowForm(false)} variant="outline" className="flex-1 bg-transparent">
-                Cancel
-              </Button>
+                rescue →
+              </button>
+
+              {/* Delete */}
+              <button
+                onClick={() => removeMisfitIdea(idea.id)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  fontSize: ".75rem",
+                  padding: ".1rem .2rem",
+                  flexShrink: 0,
+                  transition: "color .15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--red)" }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--muted)" }}
+                title="Delete permanently"
+              >
+                ✕
+              </button>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Search and Filter */}
-      <div className="space-y-3">
-        <div className="flex gap-2">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search misfits..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </div>
-
-        {allTags.length > 0 && (
-          <div>
-            <p className="text-sm font-medium text-gray-700 mb-2 flex items-center space-x-1">
-              <Filter className="h-4 w-4" />
-              <span>Filter by tags:</span>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {allTags.map((tag) => (
-                <Badge
-                  key={tag}
-                  variant={selectedTags.includes(tag) ? "default" : "outline"}
-                  className="cursor-pointer hover:bg-purple-200"
-                  onClick={() => toggleFilterTag(tag)}
-                >
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Misfit Ideas Grid */}
-      {filteredIdeas.length === 0 ? (
-        <Card className="text-center py-12">
-          <CardContent>
-            <Archive className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-600">
-              {misfitIdeas.length === 0
-                ? "No misfit ideas yet. They'll appear here when you discard ideas from sessions."
-                : "No ideas match your search or filters."}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredIdeas.map((idea) => (
-            <Card key={idea.id} className="hover:shadow-md transition-shadow border-purple-100">
-              <CardContent className="p-6">
-                <div className="mb-3">
-                  <p className="font-medium text-gray-800 mb-2">{idea.content}</p>
-                  {idea.reasonDiscarded && (
-                    <p className="text-xs text-gray-500 italic border-l-2 border-purple-300 pl-2">
-                      Discarded: {idea.reasonDiscarded}
-                    </p>
-                  )}
-                </div>
-
-                {idea.notes && (
-                  <p className="text-sm text-gray-600 mb-3">
-                    <span className="font-medium">Context:</span> {idea.notes}
-                  </p>
-                )}
-
-                {idea.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {idea.tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="text-xs">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
-                  <span className="flex items-center space-x-1">
-                    <Calendar className="h-3 w-3" />
-                    <span>{new Date(idea.discardedAt).toLocaleDateString()}</span>
-                  </span>
-                  {idea.rediscoveredIn && (
-                    <span className="flex items-center space-x-1 text-green-600">
-                      <Heart className="h-3 w-3" />
-                      <span>Reused</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex gap-2 pt-3 border-t border-gray-200">
-                  <Button
-                    onClick={() => {
-                      onMisfitImport?.(idea)
-                      removeMisfitIdea(idea.id)
-                    }}
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 bg-transparent hover:bg-green-50"
-                  >
-                    <ArchiveRestore className="h-4 w-4 mr-1" />
-                    Restore
-                  </Button>
-                  <Button
-                    onClick={() => removeMisfitIdea(idea.id)}
-                    variant="outline"
-                    size="sm"
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
           ))}
         </div>
-      )}
-
-      {/* Stats */}
-      {misfitIdeas.length > 0 && (
-        <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
-          <CardContent className="p-6">
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold text-purple-600">{misfitIdeas.length}</div>
-                <div className="text-xs text-gray-600">Ideas Archived</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-purple-600">{allTags.length}</div>
-                <div className="text-xs text-gray-600">Unique Tags</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-purple-600">
-                  {misfitIdeas.filter((i) => i.rediscoveredIn).length}
-                </div>
-                <div className="text-xs text-gray-600">Reused Ideas</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       )}
     </div>
   )

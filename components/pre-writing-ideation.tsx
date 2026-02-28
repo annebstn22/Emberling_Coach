@@ -572,7 +572,6 @@ export default function PreWritingIdeation({
         isComplete: false,
       }
       setSession(newSession)
-      setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
       // Don't save to Supabase yet - wait until idea is added
       setAllSessions((prev) => [newSession, ...prev])
       // Continue to add the idea after session is created
@@ -1611,185 +1610,184 @@ export default function PreWritingIdeation({
     )
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
-              <Badge className="bg-amber-500">
-                <Trophy className="h-3 w-3 mr-1" />
-                Ranked
-              </Badge>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <Button
-                onClick={() => {
-                  setSession(null)
-                  navigateToView("setup")
-                }}
-                variant="outline"
-                size="sm"
-              >
-                New Session
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="ideation" onLogout={onLogout} />
 
-        <div className="max-w-6xl mx-auto p-6">
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Trophy className="h-5 w-5 text-amber-600" />
-                <span>Your Ideas Ranked</span>
-              </CardTitle>
-              <p className="text-sm text-gray-600 mt-2">
-                {rankedIdeas.some(i => i.thurstoneScore !== undefined)
-                  ? "Ranked using Thurstone's Law of Comparative Judgment (Case V) - a statistical model that produces interval-scaled scores from pairwise comparisons."
-                  : "Ideas displayed in the order they were added."}
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {rankedIdeas.map((idea, idx) => {
-                  const isDiscarded = idea.status === "discarded"
-                  return (
-                  <Card
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            padding: "3rem 1.5rem",
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: "560px" }}>
+            {/* Title */}
+            <div
+              style={{
+                fontFamily: "var(--font-serif)",
+                fontStyle: "italic",
+                fontSize: "1.8rem",
+                color: "var(--ink)",
+                marginBottom: ".3rem",
+              }}
+            >
+              Your ideas, ranked.
+            </div>
+
+            {/* Sub */}
+            <div
+              style={{
+                fontSize: ".68rem",
+                color: "var(--muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".12em",
+                marginBottom: "2rem",
+              }}
+            >
+              send the weak ones to the island — or keep them all
+            </div>
+
+            {/* Ranked list */}
+            <div style={{ display: "flex", flexDirection: "column", gap: ".5rem", marginBottom: "2rem" }}>
+              {rankedIdeas.map((idea, idx) => {
+                const isDiscarded = idea.status === "discarded"
+                return (
+                  <div
                     key={idea.id}
-                    className={`${
-                      isDiscarded
-                        ? "bg-gray-50 border-gray-300 opacity-75"
-                        : idx === 0
-                          ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400"
-                          : idx === 1
-                            ? "bg-orange-50 border-orange-200"
-                            : idx === 2
-                              ? "bg-yellow-50 border-yellow-200"
-                              : "bg-white"
-                    }`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "1rem",
+                      padding: ".85rem 1.1rem",
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "8px",
+                      opacity: isDiscarded ? 0.35 : 1,
+                      animationDelay: `${idx * 0.07}s`,
+                    }}
                   >
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center space-x-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-lg font-bold ${
-                              isDiscarded
-                                ? "bg-gray-300 text-gray-600"
-                                : idx === 0
-                                  ? "bg-amber-500 text-white border-amber-600"
-                                  : idx === 1
-                                    ? "bg-orange-400 text-white border-orange-500"
-                                    : idx === 2
-                                      ? "bg-yellow-400 text-white border-yellow-500"
-                                      : "bg-gray-200 text-gray-700"
-                            }`}
-                          >
-                            #{idx + 1}
-                          </Badge>
-                          {idx < 3 && !isDiscarded && (
-                            <Award
-                              className={`h-5 w-5 ${
-                                idx === 0 ? "text-amber-500" : idx === 1 ? "text-orange-400" : "text-yellow-500"
-                              }`}
-                            />
-                          )}
-                        </div>
-                        <Button
-                          onClick={() => isDiscarded ? restoreFromMisfits(idea.id) : sendToMisfits(idea)}
-                          variant="outline"
-                          size="sm"
-                          className={isDiscarded ? "text-green-600 hover:bg-green-50" : "text-purple-600 hover:bg-purple-50"}
-                        >
-                          {isDiscarded ? (
-                            <>
-                              <RotateCcw className="h-4 w-4 mr-2" />
-                              Restore Idea
-                            </>
-                          ) : (
-                            <>
-                              <Sparkles className="h-4 w-4 mr-2" />
-                              Send to Island of Misfit Ideas
-                            </>
-                          )}
-                        </Button>
-                      </div>
+                    {/* Position */}
+                    <span
+                      style={{
+                        fontFamily: "var(--font-serif)",
+                        fontSize: "1.3rem",
+                        fontWeight: 600,
+                        color: "var(--gold)",
+                        minWidth: "28px",
+                      }}
+                    >
+                      {idx + 1}
+                    </span>
 
-                      <p className={`text-lg font-medium mb-2 ${isDiscarded ? "text-gray-500 line-through" : "text-gray-800"}`}>{idea.content}</p>
-                      {idea.notes && <p className="text-sm text-gray-600 italic mb-3">"{idea.notes}"</p>}
+                    {/* Text */}
+                    <span
+                      style={{
+                        flex: 1,
+                        fontSize: ".9rem",
+                        textDecoration: isDiscarded ? "line-through" : "none",
+                        color: isDiscarded ? "var(--muted)" : "var(--ink)",
+                      }}
+                    >
+                      {idea.content}
+                    </span>
 
-                      <div className="flex items-center space-x-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
-                        {idea.thurstoneScore !== undefined && (
-                          <div className="flex items-center space-x-2">
-                            <span className="font-medium">μ (Thurstone score):</span>
-                            <Badge variant="secondary">{idea.thurstoneScore.toFixed(3)}</Badge>
-                          </div>
-                        )}
-                        {idea.wins !== undefined && idea.wins > 0 && (
-                          <div className="flex items-center space-x-2">
-                            <span className="font-medium">Wins:</span>
-                            <Badge variant="outline">{idea.wins}</Badge>
-                          </div>
-                        )}
-                      </div>
+                    {/* Score */}
+                    {idea.wins !== undefined && idea.wins > 0 && (
+                      <span
+                        style={{
+                          fontSize: ".62rem",
+                          color: "var(--muted)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {idea.wins}W
+                      </span>
+                    )}
 
-                      {idea.attachedFiles && idea.attachedFiles.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                          <p className="text-xs font-medium text-gray-600 mb-2">Attached files:</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            {idea.attachedFiles.map((file) => {
-                              const isImage = file.type.startsWith("image/")
-                              const isVideo = file.type.startsWith("video/")
-                              const isAudio = file.type.startsWith("audio/")
+                    {/* Exile / Restore button */}
+                    {isDiscarded ? (
+                      <button
+                        onClick={() => restoreFromMisfits(idea.id)}
+                        style={{
+                          background: "none",
+                          border: "1px solid var(--border)",
+                          borderRadius: "5px",
+                          padding: ".25rem .6rem",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: ".62rem",
+                          color: "var(--muted)",
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          transition: "all .15s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "var(--green-bdr)"
+                          e.currentTarget.style.color = "var(--green)"
+                          e.currentTarget.style.background = "var(--green-bg)"
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "var(--border)"
+                          e.currentTarget.style.color = "var(--muted)"
+                          e.currentTarget.style.background = "none"
+                        }}
+                      >
+                        restore →
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => sendToMisfits(idea)}
+                        style={{
+                          background: "none",
+                          border: "1px solid #d4b4b4",
+                          borderRadius: "5px",
+                          padding: ".25rem .6rem",
+                          fontFamily: "var(--font-mono)",
+                          fontSize: ".62rem",
+                          color: "#8b4040",
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                          transition: "all .15s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#fdf0f0"
+                          e.currentTarget.style.borderColor = "var(--red)"
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "none"
+                          e.currentTarget.style.borderColor = "#d4b4b4"
+                        }}
+                      >
+                        exile →
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
 
-                              return (
-                                <div key={file.url} className="border border-gray-200 rounded p-2">
-                                  {isImage && (
-                                    <img
-                                      src={file.url || "/placeholder.svg"}
-                                      alt={file.name}
-                                      className="w-full h-32 object-cover rounded"
-                                    />
-                                  )}
-                                  {isVideo && (
-                                    <video src={file.url} controls className="w-full h-32 rounded">
-                                      Your browser does not support video.
-                                    </video>
-                                  )}
-                                  {isAudio && (
-                                    <div className="bg-gray-50 p-4 rounded">
-                                      <audio src={file.url} controls className="w-full">
-                                        Your browser does not support audio.
-                                      </audio>
-                                    </div>
-                                  )}
-                                  {!isImage && !isVideo && !isAudio && (
-                                    <a
-                                      href={file.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-xs text-blue-600 hover:underline"
-                                    >
-                                      {file.name}
-                                    </a>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+            {/* Save session button */}
+            <button
+              onClick={() => router.push("/dashboard")}
+              style={{
+                width: "100%",
+                background: "var(--ink)",
+                color: "var(--bg)",
+                border: "none",
+                borderRadius: "8px",
+                padding: "1rem",
+                fontFamily: "var(--font-serif)",
+                fontStyle: "italic",
+                fontSize: "1.1rem",
+                cursor: "pointer",
+                transition: "opacity .2s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = ".88" }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1" }}
+            >
+              Back to my projects →
+            </button>
+          </div>
         </div>
       </div>
     )

@@ -15,7 +15,6 @@ import {
   Plus,
   X,
   Sparkles,
-  Save,
   RotateCcw,
   ChevronRight,
 } from "lucide-react"
@@ -666,13 +665,31 @@ export default function ThreaderApp({
               type each point — get the best order, with reasoning
             </p>
 
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Session</span>
-              <Input
-                className="flex-1 border-b border-gray-300 bg-transparent border-t-0 border-l-0 border-r-0 rounded-none px-0"
+            <div className="flex items-center gap-3 mb-4">
+              <span
+                className="uppercase whitespace-nowrap"
+                style={{
+                  fontSize: '0.75rem',
+                  color: 'var(--muted)',
+                  letterSpacing: '0.1em',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                Session
+              </span>
+              <input
+                className="flex-1 bg-transparent border-none border-b outline-none px-0 pb-1 transition-colors"
+                style={{
+                  fontFamily: 'var(--font-serif)',
+                  fontSize: '1.1rem',
+                  color: 'var(--ink)',
+                  borderBottom: '1px solid var(--border)',
+                }}
                 placeholder="Untitled thread…"
                 value={projectTitle}
                 onChange={(e) => setProjectTitle(e.target.value)}
+                onFocus={(e) => { e.currentTarget.style.borderBottomColor = 'var(--border2)' }}
+                onBlur={(e) => { e.currentTarget.style.borderBottomColor = 'var(--border)' }}
               />
             </div>
           </div>
@@ -790,16 +807,6 @@ export default function ThreaderApp({
             </Card>
           )}
 
-          {showSaveButton && (
-            <Button
-              onClick={saveSession}
-              className="w-full bg-gray-900 text-white"
-              size="lg"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              Save this thread →
-            </Button>
-          )}
         </div>
       </div>
     )
