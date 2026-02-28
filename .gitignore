@@ -1,3 +1,8 @@
 /.next
 node_modules
 .env*
+
+# Prototype and reference files
+capstone-final.html
+Idea Threader.ipynb
+THREADER_FLOW.md

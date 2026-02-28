@@ -7,6 +7,7 @@ CREATE TABLE threader_projects (
   title TEXT NOT NULL,
   description TEXT,
   coach_project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  ordering_result JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
