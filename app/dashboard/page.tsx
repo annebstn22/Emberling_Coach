@@ -6,8 +6,9 @@ import { useAuth } from "@/components/auth-provider"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Home, LogOut, Sparkles, Lightbulb, FileText, X } from "lucide-react"
+import { Sparkles, Lightbulb, FileText, X } from "lucide-react"
 import Link from "next/link"
+import SharedNav from "@/components/shared-nav"
 
 interface DashboardProject {
   id: string
@@ -259,44 +260,7 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-[#f7f4ee]">
-      {/* Navigation */}
-      <nav className="sticky top-0 z-50 bg-[#f7f4ee] border-b border-[#e0dbd0] px-8 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="font-serif text-xl font-light text-[#1a1814] tracking-wide">
-              Emberling
-            </Link>
-            <div className="flex gap-1">
-              <Link href="/pre-writing">
-                <button className="px-3 py-1.5 text-xs uppercase tracking-wider text-[#9a948a] border border-transparent rounded hover:border-[#e0dbd0] transition-all">
-                  💡 Ideation
-                </button>
-              </Link>
-              <Link href="/threader">
-                <button className="px-3 py-1.5 text-xs uppercase tracking-wider text-[#9a948a] border border-transparent rounded hover:border-[#e0dbd0] transition-all">
-                  🧵 Threader
-                </button>
-              </Link>
-              <Link href="/writing-coach">
-                <button className="px-3 py-1.5 text-xs uppercase tracking-wider text-[#9a948a] border border-transparent rounded hover:border-[#e0dbd0] transition-all">
-                  ✍️ Coach
-                </button>
-              </Link>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={signOut}
-              variant="outline"
-              size="sm"
-              className="border-[#e0dbd0] text-[#9a948a] hover:border-[#c8c2b4] hover:text-[#1a1814]"
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-        </div>
-      </nav>
+      <SharedNav activeTool="dashboard" onLogout={signOut} />
 
       {/* Main Content */}
       <div className="max-w-[860px] mx-auto px-6 py-12">

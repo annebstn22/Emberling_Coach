@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
+import Link from "next/link"
+import SharedNav from "@/components/shared-nav"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -69,7 +71,7 @@ export default function ThreaderApp({
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const viewFromUrl = (searchParams.get("view") as "dashboard" | "session") || "dashboard"
+  const viewFromUrl = (searchParams.get("view") as "dashboard" | "session") || "session"
   const sessionIdFromUrl = searchParams.get("session")
 
   // If sessionIdFromUrl is present, default to "session" instead of "dashboard" to avoid flashing dashboard
@@ -83,6 +85,7 @@ export default function ThreaderApp({
       setCurrentView(viewFromUrl)
     }
   }, [viewFromUrl, currentView])
+  
   const [currentProject, setCurrentProject] = useState<ThreaderProject | null>(null)
   const [projectTitle, setProjectTitle] = useState("")
   const [currentPoint, setCurrentPoint] = useState("")
@@ -93,6 +96,7 @@ export default function ThreaderApp({
   const [showSaveButton, setShowSaveButton] = useState(false)
 
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isLoadingFromUrlRef = useRef(false)
 
   // Load projects from Supabase
   const loadProjectsFromSupabase = async () => {
@@ -159,26 +163,73 @@ export default function ThreaderApp({
     }
   }, [user?.id])
 
+
+  // Ensure projects are loaded when sessionIdFromUrl is present
+  useEffect(() => {
+    if (sessionIdFromUrl && allProjects.length === 0 && user?.id) {
+      // Force load projects if we have a sessionId but no projects loaded
+      loadProjectsFromSupabase()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIdFromUrl, allProjects.length, user?.id])
+
   // Load session from URL when sessionIdFromUrl is present and projects are loaded
   useEffect(() => {
+    // ONLY update currentProject from allProjects if we're loading from URL
     if (sessionIdFromUrl && allProjects.length > 0) {
+      isLoadingFromUrlRef.current = true
       const project = allProjects.find((p) => p.id === sessionIdFromUrl)
-      if (project && (!currentProject || currentProject.id !== project.id)) {
-        // Set view to session if it's not already
-        if (currentView !== "session") {
-          setCurrentView("session")
+      if (project) {
+        // Only update if we don't have a project OR the project ID doesn't match
+        // This prevents overwriting the active project when allProjects updates from auto-save
+        if (!currentProject || currentProject.id !== project.id) {
+          // Set view to session if it's not already
+          if (currentView !== "session") {
+            setCurrentView("session")
+          }
+          loadSession(project.id)
+          setIsLoadingSession(false)
+        } else {
+          // Project already matches - just clear loading state
+          setIsLoadingSession(false)
         }
-        loadSession(project.id)
-        setIsLoadingSession(false)
+        isLoadingFromUrlRef.current = false
       } else if (sessionIdFromUrl && allProjects.length > 0 && !project) {
-        // Session not found
+        // Session not found after loading
         setIsLoadingSession(false)
+        isLoadingFromUrlRef.current = false
       }
+    } else if (sessionIdFromUrl && allProjects.length === 0) {
+      // Projects are still loading, keep loading state
+      // Don't set isLoadingSession to false yet
     } else if (!sessionIdFromUrl) {
+      isLoadingFromUrlRef.current = false
+      // Don't clear project here - let the effect above handle it
       setIsLoadingSession(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionIdFromUrl, allProjects])
+  }, [sessionIdFromUrl, currentView, allProjects.length])
+
+  // If view is "session" and no session exists, create a local session for UI (but don't save to DB until first point is added)
+  useEffect(() => {
+    if (viewFromUrl === "session" && !sessionIdFromUrl && !currentProject && currentView === "session") {
+      // Create a local session for UI display (not saved to Supabase until first point is added)
+      const newProject: ThreaderProject = {
+        id: crypto.randomUUID(),
+        title: "",
+        points: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      setCurrentProject(newProject)
+      setProjectTitle("")
+      setPoints([])
+      setOrderingResult(null)
+      setShowSaveButton(false)
+      // Don't save to Supabase - wait until first point is added (handled in addPoint)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewFromUrl, sessionIdFromUrl, currentProject, currentView])
 
   // Auto-save project (but don't clear ordering on auto-save)
   useEffect(() => {
@@ -206,6 +257,12 @@ export default function ThreaderApp({
     clearOrdering: boolean = false,
   ) => {
     if (!user?.id) return
+
+    // Skip saving empty projects (like ideation - only save when there's at least one point)
+    if (projectPoints.length === 0) {
+      console.log(`Skipping save for empty project ${projectId}`)
+      return
+    }
 
     try {
       // Upsert project
@@ -293,6 +350,25 @@ export default function ThreaderApp({
   const addPoint = async () => {
     if (!currentPoint.trim()) return
 
+    // Auto-create project ONLY when user adds their first point (like ideation)
+    // Don't save to Supabase until at least one point is added
+    if (!currentProject) {
+      const newProject: ThreaderProject = {
+        id: crypto.randomUUID(),
+        title: "",
+        points: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+      setCurrentProject(newProject)
+      setProjectTitle("")
+      setPoints([])
+      setOrderingResult(null)
+      setShowSaveButton(false)
+      // Don't save to Supabase yet - wait until point is added
+      setAllProjects((prev) => [newProject, ...prev])
+    }
+
     const newPoint: ThreaderPoint = {
       id: crypto.randomUUID(),
       text: currentPoint.trim(),
@@ -302,9 +378,11 @@ export default function ThreaderApp({
     const updatedPoints = [...points, newPoint]
     setPoints(updatedPoints)
 
-    if (currentProject) {
+    // Use currentProject (which should exist now)
+    const projectToUse = currentProject || allProjects[0]
+    if (projectToUse) {
       setCurrentProject({
-        ...currentProject,
+        ...projectToUse,
         points: updatedPoints,
       })
     }
@@ -317,9 +395,12 @@ export default function ThreaderApp({
       setShowSaveButton(false)
       
       // Clear ordering result in database
-      if (currentProject) {
-        await saveProjectToSupabase(currentProject.id, projectTitle, updatedPoints, true)
+      if (projectToUse) {
+        await saveProjectToSupabase(projectToUse.id, projectTitle, updatedPoints, true)
       }
+    } else if (projectToUse && user?.id) {
+      // Save the project with the new point (first save)
+      await saveProjectToSupabase(projectToUse.id, projectTitle, updatedPoints, false)
     }
   }
 
@@ -477,28 +558,8 @@ export default function ThreaderApp({
   // Dashboard view
   if (currentView === "dashboard") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
-        <div className="bg-white border-b border-blue-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" onClick={onBack}>
-                <Home className="h-4 w-4 mr-2" />
-                Tool Select
-              </Button>
-              <h1 className="text-lg font-medium text-gray-800">🧵 Threader</h1>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm" onClick={() => router.push("/dashboard")}>
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <Button variant="outline" size="sm" onClick={onLogout}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="threader" onLogout={onLogout} />
 
         <div className="max-w-6xl mx-auto p-6 space-y-6">
           <Card className="bg-gradient-to-r from-blue-500 to-indigo-500 border-none text-white">
@@ -571,29 +632,15 @@ export default function ThreaderApp({
   }
 
   // Session view
-  if (currentView === "session" && currentProject) {
+  if (currentView === "session") {
     const showNudge = points.length >= 3
     const bestOrdering = orderingResult?.best_ordering
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
-        <div className="bg-white border-b border-blue-200 px-4 py-3">
-          <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" onClick={() => setCurrentView("dashboard")}>
-                <Home className="h-4 w-4 mr-2" />
-                Back to Dashboard
-              </Button>
-              <h1 className="text-lg font-medium text-gray-800">🧵 Threader</h1>
-            </div>
-            <Button variant="outline" size="sm" onClick={onLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="threader" onLogout={onLogout} />
 
-        <div className="max-w-4xl mx-auto p-6 space-y-6">
+        <div className="max-w-[600px] mx-auto px-6 py-12 space-y-6">
           <div>
             <h2 className="text-2xl font-light text-gray-800 mb-1">
               <em>What do you need to cover?</em>

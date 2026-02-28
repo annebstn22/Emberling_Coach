@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=Inconsolata:wght@300;400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,8 +12,32 @@
 
 @layer base {
   :root {
+    /* Prototype color variables */
+    --bg: #f7f4ee;
+    --surface: #fff;
+    --border: #e0dbd0;
+    --border2: #c8c2b4;
+    --ink: #1a1814;
+    --ink2: #4a4640;
+    --muted: #9a948a;
+    --gold: #b8860b;
+    --gold-bg: #fdf8ee;
+    --gold-bdr: #e8d08a;
+    --blue: #1a4a6e;
+    --blue-bg: #eef4fa;
+    --blue-bdr: #a8c8e8;
+    --green: #1a5c32;
+    --green-bg: #eef7f2;
+    --green-bdr: #a8d8b8;
+    --red: #8b2020;
+    
+    /* Font families */
+    --font-serif: 'Cormorant Garamond', serif;
+    --font-mono: 'Inconsolata', monospace;
+    
+    /* Keep existing shadcn/ui variables for compatibility */
     --font-sans: var(--font-geist-sans);
-    --font-mono: var(--font-geist-mono);
+    --font-mono-ui: var(--font-geist-mono);
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
@@ -88,5 +114,35 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-mono);
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
   }
+}
+
+@keyframes popIn {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-popIn {
+  animation: popIn 0.3s cubic-bezier(0.34, 1.5, 0.64, 1);
 }

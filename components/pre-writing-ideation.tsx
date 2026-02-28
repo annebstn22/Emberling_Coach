@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
+import Link from "next/link"
+import SharedNav from "@/components/shared-nav"
 import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -156,7 +158,7 @@ export default function PreWritingIdeation({
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const viewFromUrl = (searchParams.get("view") as "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review") || "dashboard"
+  const viewFromUrl = (searchParams.get("view") as "dashboard" | "setup" | "ideate" | "compare" | "ranked" | "island-of-misfits" | "review") || "ideate" // Default to ideate like prototype
   const sessionIdFromUrl = searchParams.get("session")
 
   const [session, setSession] = useState<IdeationSession | null>(null)
@@ -164,20 +166,31 @@ export default function PreWritingIdeation({
   const [sessionDescription, setSessionDescription] = useState("")
   // If sessionIdFromUrl is present but viewFromUrl is dashboard, default to ranked
   // Otherwise use the view from URL (which could be ideate, compare, ranked, review)
-  const initialView = sessionIdFromUrl && viewFromUrl === "dashboard" ? "ranked" : viewFromUrl
+  // If viewFromUrl is "ideate" and no sessionIdFromUrl, we'll auto-create a session
+  // Default to "ideate" if viewFromUrl is "ideate" (like prototype - immediate start)
+  const initialView = sessionIdFromUrl && viewFromUrl === "dashboard" 
+    ? "ranked" 
+    : viewFromUrl === "ideate" 
+      ? "ideate" 
+      : viewFromUrl || "ideate" // Default to ideate if no view specified
   const [currentView, setCurrentView] = useState(initialView)
   const [isLoadingSession, setIsLoadingSession] = useState(!!sessionIdFromUrl)
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
+  const [promptTextVisible, setPromptTextVisible] = useState(true)
   const [currentIdea, setCurrentIdea] = useState("")
   const [currentNotes, setCurrentNotes] = useState("")
-  const [timerDuration, setTimerDuration] = useState(25)
   const [activeTab, setActiveTab] = useState("ideas")
   const [showFileUpload, setShowFileUpload] = useState(false)
   const [sessionUploadedFiles, setSessionUploadedFiles] = useState<UploadedFile[]>([])
+  const [fileUploadKey, setFileUploadKey] = useState(0)
 
   const [allSessions, setAllSessions] = useState<IdeationSession[]>([])
   const justNavigatedRef = useRef(false)
   const pendingSessionIdRef = useRef<string | null>(null)
+  const hasAutoCreatedSession = useRef(false)
+  const isLoadingSessionsRef = useRef(false)
+  const allSessionsRef = useRef<IdeationSession[]>([])
+  const isLoadingFromUrlRef = useRef(false)
 
   // Load sessions from Supabase
   const loadSessionsFromSupabase = async () => {
@@ -193,6 +206,7 @@ export default function PreWritingIdeation({
         .select("*, ideas(*)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
+        .limit(100) // Limit to most recent 100 sessions to prevent performance issues
 
       if (error) {
         console.error("Error loading sessions:", error)
@@ -219,7 +233,8 @@ export default function PreWritingIdeation({
             thurstoneScore: idea.thurstone_score ? Number(idea.thurstone_score) : undefined,
           }))
           
-          console.log(`Session ${s.id} (${s.title}) has ${ideas.length} ideas`)
+          // Removed excessive logging - only log if there are ideas
+          // console.log(`Session ${s.id} (${s.title}) has ${ideas.length} ideas`)
           
           return {
             id: s.id,
@@ -235,7 +250,11 @@ export default function PreWritingIdeation({
           }
         })
 
-        console.log(`Setting ${formattedSessions.length} formatted sessions`)
+        // Only log if there are sessions with ideas
+        const sessionsWithIdeas = formattedSessions.filter(s => s.ideas.length > 0)
+        if (sessionsWithIdeas.length > 0) {
+          console.log(`Loaded ${formattedSessions.length} sessions (${sessionsWithIdeas.length} with ideas)`)
+        }
         setAllSessions(formattedSessions)
       } else {
         console.log("No sessions found in database")
@@ -313,52 +332,109 @@ export default function PreWritingIdeation({
     }
   }, [viewFromUrl, sessionIdFromUrl, currentView, session])
 
+  // Remove auto-create session logic - session will be created when first idea is added
+
   // Load session from allSessions when sessionId is in URL
-  // Don't clear session when we've just navigated to a session - URL may not have updated yet
+  // Use a ref to track when allSessions updates so we can load the session
+  // This prevents circular dependencies
   useEffect(() => {
+    allSessionsRef.current = allSessions
+  }, [allSessions])
+
+  // Ensure sessions are loaded when sessionIdFromUrl is present
+  useEffect(() => {
+    if (sessionIdFromUrl && allSessions.length === 0 && !isLoadingSessionsRef.current && user?.id) {
+      // Force load sessions if we have a sessionId but no sessions loaded
+      isLoadingSessionsRef.current = true
+      loadSessionsFromSupabase().finally(() => {
+        isLoadingSessionsRef.current = false
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIdFromUrl, allSessions.length, user?.id])
+
+  // Update ref when allSessions changes (for other use cases)
+  useEffect(() => {
+    allSessionsRef.current = allSessions
+  }, [allSessions])
+
+  useEffect(() => {
+    // ONLY update session from allSessions if we're loading from URL
     if (sessionIdFromUrl && allSessions.length > 0) {
+      isLoadingFromUrlRef.current = true
       pendingSessionIdRef.current = null
       const found = allSessions.find((s) => s.id === sessionIdFromUrl)
       if (found) {
-        setSession(found)
-        setIsLoadingSession(false)
-        // Use the view from URL if it's a valid session view, otherwise use session's lastView or default
-        const sessionViews = ["ideate", "compare", "ranked", "review"]
-        const targetView = sessionViews.includes(viewFromUrl) 
-          ? viewFromUrl 
-          : (found.lastView || (found.isComplete ? "ranked" : "ideate"))
-        
-        if (targetView !== currentView) {
-          setCurrentView(targetView as typeof currentView)
+        // Only update if we don't have a session OR the session ID doesn't match
+        // This prevents overwriting the active session when allSessions updates from auto-save
+        if (!session || session.id !== sessionIdFromUrl) {
+          setSession(found)
+          setIsLoadingSession(false)
+          // Use the view from URL if it's a valid session view, otherwise use session's lastView or default
+          const sessionViews = ["ideate", "compare", "ranked", "review"]
+          const targetView = sessionViews.includes(viewFromUrl) 
+            ? viewFromUrl 
+            : (found.lastView || (found.isComplete ? "ranked" : "ideate"))
+          
+          if (targetView !== currentView) {
+            setCurrentView(targetView as typeof currentView)
+          }
+        } else {
+          // Session already matches - just clear loading state
+          setIsLoadingSession(false)
         }
+        isLoadingFromUrlRef.current = false
       } else if (
         ["ideate", "compare", "ranked", "review"].includes(viewFromUrl) &&
         (!session || session.id !== sessionIdFromUrl)
       ) {
+        // Session not found after loading - redirect
+        setIsLoadingSession(false)
+        isLoadingFromUrlRef.current = false
         router.replace("/pre-writing")
       }
+    } else if (sessionIdFromUrl && allSessions.length === 0) {
+      // Sessions are still loading - keep loading state true
+      // The session will be loaded once allSessions is populated
+      if (!isLoadingSessionsRef.current) {
+        // If we're not loading, trigger a load
+        isLoadingSessionsRef.current = true
+        loadSessionsFromSupabase().finally(() => {
+          isLoadingSessionsRef.current = false
+        })
+      }
     } else if (!sessionIdFromUrl && !pendingSessionIdRef.current) {
-      setSession(null)
+      isLoadingFromUrlRef.current = false
+      // Don't clear session here - let the effect above handle it
+      setIsLoadingSession(false)
     }
-  }, [sessionIdFromUrl, allSessions, viewFromUrl, router, session?.id, currentView])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIdFromUrl, viewFromUrl, router, currentView, allSessions.length])
 
+  // Only load sessions when needed: dashboard view or loading specific session
+  // Don't load on every mount - only when explicitly needed
   useEffect(() => {
-    if (user?.id) {
-      console.log("🔄 Pre-writing: User ID changed, loading sessions:", user.id)
-      loadSessionsFromSupabase()
-    } else {
+    if (!user?.id) {
       // Clear sessions if no user
-      console.log("🔄 Pre-writing: No user, clearing sessions")
       setAllSessions([])
+      return
     }
-  }, [user?.id])
+    
+    // Only load if:
+    // 1. Viewing dashboard, OR
+    // 2. Loading a specific session from URL (even if sessions are already loaded, reload to ensure we have the latest)
+    const shouldLoad = currentView === "dashboard" || (sessionIdFromUrl && (!isLoadingSessionsRef.current))
+    
+    if (shouldLoad && !isLoadingSessionsRef.current) {
+      isLoadingSessionsRef.current = true
+      loadSessionsFromSupabase().finally(() => {
+        isLoadingSessionsRef.current = false
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView, sessionIdFromUrl, user?.id])
 
-  // Reload sessions when navigating to dashboard
-  useEffect(() => {
-    if (currentView === "dashboard" && user?.id) {
-      loadSessionsFromSupabase()
-    }
-  }, [currentView, user?.id])
+  // Dashboard loading is now handled in the main session loading useEffect above
 
   // Auto-save session to Supabase when it changes (but not if it's already complete)
   useEffect(() => {
@@ -390,6 +466,12 @@ export default function PreWritingIdeation({
   // Save session to Supabase
   const saveSessionToSupabase = async (session: IdeationSession) => {
     if (!user?.id) return
+    
+    // Don't save empty sessions - only save if there's at least one idea
+    if (!session.ideas || session.ideas.length === 0) {
+      console.log(`Skipping save for empty session ${session.id}`)
+      return
+    }
 
     try {
       // Upsert session
@@ -466,55 +548,47 @@ export default function PreWritingIdeation({
     }
   }
 
-  // Timer effect
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (session?.isTimerRunning && session.timer > 0) {
-      interval = setInterval(() => {
-        setSession((prev) => {
-          if (!prev) return prev
-          const newTimer = prev.timer - 1
-          if (newTimer === 0) {
-            return { ...prev, isTimerRunning: false, timer: 0 }
-          }
-          return { ...prev, timer: newTimer }
-        })
-      }, 1000)
-    }
-    return () => clearInterval(interval)
-  }, [session?.isTimerRunning])
+  // DON'T auto-create sessions - only create when user adds first idea (like threading)
+  // This prevents creating thousands of empty sessions
 
-  const startSession = async () => {
-    if (!sessionTitle.trim()) {
-      alert("Please enter a session title to get started.")
+
+  const addIdea = () => {
+    if (!currentIdea.trim()) {
       return
     }
 
-    const newSession: IdeationSession = {
-      id: crypto.randomUUID(), // Use UUID instead of timestamp for better uniqueness
-      title: sessionTitle,
-      description: sessionDescription,
-      createdAt: new Date(),
-      ideas: [],
-      timer: timerDuration * 60,
-      isTimerRunning: true,
-      uploadedFiles: [],
-      isComplete: false,
-    }
-
-    setSession(newSession)
-    navigateToView("ideate", newSession.id)
-    setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
-    
-    // Immediately save the new session to Supabase
-    if (user?.id) {
-      await saveSessionToSupabase(newSession)
+    // Auto-create session ONLY when user adds their first idea (like threading)
+    // Don't save to Supabase until there's at least one idea
+    if (!session) {
+      const newSession: IdeationSession = {
+        id: crypto.randomUUID(),
+        title: "",
+        description: "",
+        createdAt: new Date(),
+        ideas: [],
+        timer: 0,
+        isTimerRunning: false,
+        uploadedFiles: [],
+        isComplete: false,
+      }
+      setSession(newSession)
+      setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
+      // Don't save to Supabase yet - wait until idea is added
       setAllSessions((prev) => [newSession, ...prev])
+      // Continue to add the idea after session is created
+      setTimeout(() => {
+        if (currentIdea.trim()) {
+          addIdeaToSession(newSession)
+        }
+      }, 0)
+      return
     }
+    
+    addIdeaToSession(session)
   }
 
-  const addIdea = () => {
-    if (!currentIdea.trim() || !session) return
+  const addIdeaToSession = (sessionToUse: IdeationSession) => {
+    if (!currentIdea.trim()) return
 
     const newIdea: IdeaEntry = {
       id: crypto.randomUUID(),
@@ -528,17 +602,20 @@ export default function PreWritingIdeation({
     }
 
     setSession({
-      ...session,
-      ideas: [...session.ideas, newIdea],
+      ...sessionToUse,
+      ideas: [...(sessionToUse.ideas || []), newIdea],
     })
 
     setCurrentIdea("")
     setCurrentNotes("")
     setSessionUploadedFiles([])
+    // Reset FileUpload component by changing key
+    setFileUploadKey(prev => prev + 1)
   }
 
   const newCard = () => {
-    setCurrentCardIndex(Math.floor(Math.random() * STRATEGY_CARDS.length))
+    // Cycle to next card (not random, just increment)
+    setCurrentCardIndex((prev) => (prev + 1) % STRATEGY_CARDS.length)
     setCurrentIdea("")
     setCurrentNotes("")
   }
@@ -762,28 +839,8 @@ export default function PreWritingIdeation({
 
   if (currentView === "dashboard") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" onClick={onBack}>
-                <Home className="h-4 w-4 mr-2" />
-                Tool Select
-              </Button>
-              <h1 className="text-lg font-medium text-gray-800">Pre-Writing Ideation</h1>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm" onClick={() => router.push("/dashboard")}>
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <Button variant="outline" size="sm" onClick={onLogout}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="ideation" onLogout={onLogout} />
 
         <div className="max-w-6xl mx-auto p-6 space-y-6">
           {/* New Session Card */}
@@ -902,18 +959,8 @@ export default function PreWritingIdeation({
 
   if (currentView === "island-of-misfits") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" onClick={() => navigateToView("dashboard")}>
-                <Home className="h-4 w-4 mr-2" />
-                Back to Dashboard
-              </Button>
-              <h1 className="text-lg font-medium text-gray-800">Island of Misfit Ideas</h1>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="island" onLogout={onLogout} />
         <div className="max-w-6xl mx-auto p-6">
           <IslandOfMisfits
             user={user}
@@ -927,87 +974,16 @@ export default function PreWritingIdeation({
     )
   }
 
-  // Setup view
+  // Setup view - redirect to ideate if no session (session will be auto-created on first idea)
   if (!session && currentView === "setup") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Lightbulb className="h-6 w-6 text-amber-600" />
-              <h1 className="text-xl font-medium text-gray-800">Pre-Writing Ideation</h1>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <Button onClick={onLogout} variant="outline" size="sm">
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <div className="max-w-2xl mx-auto p-6">
-          <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-3xl font-light text-gray-800">Start a Creative Ideation Session</CardTitle>
-              <p className="text-gray-600 mt-2">
-                Use strategy cards inspired by Oblique Strategies to unlock new ideas
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Session Title</label>
-                <Input
-                  placeholder="e.g., Blog Post Ideas, Novel Chapter Opening"
-                  value={sessionTitle}
-                  onChange={(e) => setSessionTitle(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description (optional)</label>
-                <Textarea
-                  placeholder="What are you trying to write about or explore?"
-                  value={sessionDescription}
-                  onChange={(e) => setSessionDescription(e.target.value)}
-                  className="min-h-24"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Session Duration (minutes)</label>
-                <div className="flex items-center space-x-4">
-                  <input
-                    type="range"
-                    min="5"
-                    max="120"
-                    step="5"
-                    value={timerDuration}
-                    onChange={(e) => setTimerDuration(Number(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="text-2xl font-bold text-amber-600 w-20 text-center">{timerDuration}</span>
-                </div>
-              </div>
-
-              <Button onClick={startSession} size="lg" className="w-full bg-amber-600 hover:bg-amber-700">
-                <Zap className="h-4 w-4 mr-2" />
-                Start Ideation Session
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    )
+    setCurrentView("ideate")
+    return null
   }
 
-  // Ideation view - require session
+  // Ideation view - session should be created by useEffect if needed
   if (currentView === "ideate") {
-    if (!session) {
+    // If no session and we're not in ideate view from URL, redirect to dashboard
+    if (!session && viewFromUrl !== "ideate") {
       navigateToView("dashboard")
       return (
         <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
@@ -1015,260 +991,388 @@ export default function PreWritingIdeation({
         </div>
       )
     }
+    // Use session if it exists, otherwise use empty state (session will be created by useEffect)
     const currentCard = STRATEGY_CARDS[currentCardIndex]
-    const activeIdeas = (session.ideas ?? []).filter((idea) => idea.status === "active")
-    const discardedIdeas = (session.ideas ?? []).filter((idea) => idea.status === "discarded")
+    const activeIdeas = session ? (session.ideas ?? []).filter((idea) => idea.status === "active") : []
+    const showRankTrigger = activeIdeas.length >= 3
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="bg-white border-b border-orange-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-lg font-medium text-gray-800">{session.title}</h1>
-              <Badge variant="outline">{activeIdeas.length} ideas</Badge>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="ideation" onLogout={onLogout} />
+
+        {/* Main Content - matching prototype exactly */}
+        <div className="max-w-[600px] mx-auto px-6 py-12">
+          <h2 
+            className="mb-1"
+            style={{ 
+              fontFamily: 'var(--font-serif)',
+              fontSize: '2.2rem',
+              fontWeight: 300,
+              color: 'var(--ink)'
+            }}
+          >
+            <em>What's on your mind?</em>
+          </h2>
+          <p 
+            className="mb-10"
+            style={{ 
+              fontSize: '0.7rem',
+              color: 'var(--muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              fontFamily: 'var(--font-mono)'
+            }}
+          >
+            drop every thought — no filter, no order
+          </p>
+
+          {/* Session name row */}
+          <div className="flex items-center gap-3 mb-8">
+            <span 
+              className="text-xs uppercase whitespace-nowrap"
+              style={{ 
+                fontSize: '0.58rem',
+                color: 'var(--muted)',
+                letterSpacing: '0.1em',
+                fontFamily: 'var(--font-mono)'
+              }}
+            >
+              Session
+            </span>
+            <input
+              type="text"
+              value={session?.title || ""}
+              onChange={(e) => {
+                // Allow typing even if session doesn't exist yet - it will be created when first idea is added
+                if (!session) {
+                  // Create a temporary session for the title
+                  const tempSession: IdeationSession = {
+                    id: crypto.randomUUID(),
+                    title: e.target.value,
+                    description: "",
+                    createdAt: new Date(),
+                    ideas: [],
+                    timer: 0,
+                    isTimerRunning: false,
+                    uploadedFiles: [],
+                    isComplete: false,
+                  }
+                  setSession(tempSession)
+                  return
+                }
+                const updatedSession = { ...session, title: e.target.value }
+                setSession(updatedSession)
+                if (user?.id && updatedSession.ideas.length > 0) {
+                  saveSessionToSupabase(updatedSession)
+                }
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  e.nativeEvent.stopImmediatePropagation()
+                  return false
+                }
+              }}
+              onKeyPress={(e) => {
+                e.stopPropagation()
+              }}
+              placeholder="Untitled ideation…"
+              className="flex-1 bg-transparent border-none border-b outline-none px-0 pb-1 transition-colors"
+              style={{ 
+                fontFamily: 'var(--font-serif)',
+                fontSize: '1.1rem',
+                color: 'var(--ink)',
+                borderBottomColor: 'var(--border)'
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderBottomColor = 'var(--border2)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderBottomColor = 'var(--border)'
+              }}
+            />
+          </div>
+
+          {/* Prompt card */}
+          <div 
+            className="rounded-2xl p-7 mb-6 cursor-pointer transition-transform relative overflow-hidden"
+            onClick={(e) => {
+              // Only trigger on mouse clicks, not keyboard events
+              if (e.detail === 0) return // Keyboard-triggered click
+              // Only trigger if clicking directly on the card, not on child elements
+              if (e.target === e.currentTarget || (e.target as HTMLElement).closest('.prompt-card-content')) {
+                newCard()
+                setPromptTextVisible(false)
+                setTimeout(() => setPromptTextVisible(true), 200)
+              }
+            }}
+            onKeyDown={(e) => {
+              // Prevent keyboard events from triggering card switch
+              e.stopPropagation()
+            }}
+            onKeyDown={(e) => {
+              // Prevent keyboard events from triggering card switch
+              e.stopPropagation()
+            }}
+            style={{
+              background: 'var(--ink)',
+              color: 'var(--bg)',
+              borderRadius: '14px',
+              minHeight: '110px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+            }}
+          >
+            <div 
+              className="text-xs uppercase mb-3"
+              style={{ 
+                fontSize: '0.58rem',
+                letterSpacing: '0.14em',
+                opacity: 0.4,
+                fontFamily: 'var(--font-mono)'
+              }}
+            >
+              Divergent thinking card — click for a new one
             </div>
-            <div className="flex items-center space-x-4">
-              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
-                <Home className="h-4 w-4 mr-2" />
-                My Projects
-              </Button>
-              <div className="text-center">
-                <div className="text-2xl font-mono font-bold text-amber-600">{formatTime(session.timer)}</div>
-                <div className="text-xs text-gray-600">remaining</div>
+            <div 
+              className="mb-2 transition-opacity duration-300 prompt-card-content"
+              style={{ 
+                fontFamily: 'var(--font-serif)',
+                fontStyle: 'italic',
+                fontSize: '1.25rem',
+                fontWeight: 300,
+                lineHeight: 1.4,
+                opacity: promptTextVisible ? 1 : 0
+              }}
+            >
+              {currentCard.text}
+            </div>
+            <div 
+              className="text-xs self-end"
+              style={{ 
+                fontSize: '0.6rem',
+                opacity: 0.3,
+                fontFamily: 'var(--font-mono)'
+              }}
+            >
+              click for next →
+            </div>
+            <div 
+              className="absolute -bottom-8 -right-8 w-30 h-30 rounded-full pointer-events-none"
+              style={{
+                width: '120px',
+                height: '120px',
+                background: 'rgba(255,255,255,0.04)'
+              }}
+            />
+          </div>
+
+          {/* Idea input row */}
+          <div className="flex gap-3 mb-5">
+            <input
+              type="text"
+              value={currentIdea}
+              onChange={(e) => setCurrentIdea(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  e.nativeEvent.stopImmediatePropagation()
+                  if (currentIdea.trim()) {
+                    addIdea()
+                  }
+                  return false
+                }
+              }}
+              placeholder="write an idea, any idea…"
+              className="flex-1 rounded-lg px-4 py-3 outline-none transition-colors"
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.9rem',
+                color: 'var(--ink)'
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border2)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border)'
+              }}
+            />
+            <button
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                addIdea()
+              }}
+              disabled={!currentIdea.trim()}
+              className="rounded-lg px-5 py-3 whitespace-nowrap transition-opacity disabled:opacity-50"
+              style={{
+                background: 'var(--ink)',
+                color: 'var(--bg)',
+                border: 'none',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.75rem'
+              }}
+              onMouseEnter={(e) => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.opacity = '0.8'
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '1'
+              }}
+            >
+              Add {sessionUploadedFiles.length > 0 && `(${sessionUploadedFiles.length} file${sessionUploadedFiles.length !== 1 ? 's' : ''})`} →
+            </button>
+          </div>
+
+          {/* File upload option (multimedia) */}
+          {showFileUpload && (
+            <div className="mb-5">
+              <FileUpload key={fileUploadKey} onFileUpload={handleFileUpload} />
+            </div>
+          )}
+          {!showFileUpload && (
+            <button
+              onClick={() => setShowFileUpload(true)}
+              className="mb-5 text-xs text-muted hover:text-ink transition-colors"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--muted)' }}
+            >
+              + Add multimedia
+            </button>
+          )}
+
+          {/* Ideas stack */}
+          {activeIdeas.length > 0 && (
+            <div className="flex flex-col gap-2 mb-6">
+              {activeIdeas.map((idea, i) => (
+                <div
+                  key={idea.id}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg animate-popIn"
+                  style={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    fontSize: '0.88rem',
+                    fontFamily: 'var(--font-mono)'
+                  }}
+                >
+                  <span 
+                    className="text-xs min-w-[18px]"
+                    style={{ 
+                      fontSize: '0.58rem',
+                      color: 'var(--muted)'
+                    }}
+                  >
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <span className="flex-1">{idea.content}</span>
+                  <button
+                    onClick={() => {
+                      if (!session) return
+                      const updatedIdeas = session.ideas.filter((i) => i.id !== idea.id)
+                      const updatedSession = { ...session, ideas: updatedIdeas }
+                      setSession(updatedSession)
+                      if (user?.id && updatedIdeas.length > 0) {
+                        saveSessionToSupabase(updatedSession)
+                      }
+                    }}
+                    className="text-xs px-2 py-1 rounded transition-colors"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--muted)',
+                      fontSize: '0.7rem'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = 'var(--red)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = 'var(--muted)'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Rank trigger - show when 3+ ideas */}
+          {showRankTrigger && (
+            <div 
+              className="rounded-xl p-5 mb-6 flex items-center justify-between gap-4 transition-all"
+              style={{
+                background: 'var(--gold-bg)',
+                border: '1px solid var(--gold-bdr)',
+                borderRadius: '10px',
+                animation: 'fadeSlideUp 0.5s ease'
+              }}
+            >
+              <div>
+                <div 
+                  className="mb-1"
+                  style={{
+                    fontFamily: 'var(--font-serif)',
+                    fontStyle: 'italic',
+                    fontSize: '1rem',
+                    color: 'var(--gold)',
+                    lineHeight: 1.4
+                  }}
+                >
+                  {activeIdeas.length === 3 
+                    ? "You have 3 ideas. Let's find out which is strongest."
+                    : `You have ${activeIdeas.length} ideas. Let's find out which ones matter.`}
+                </div>
+                <div 
+                  className="text-xs"
+                  style={{ 
+                    fontSize: '0.62rem',
+                    color: '#a07820',
+                    fontFamily: 'var(--font-mono)'
+                  }}
+                >
+                  comparative judgement — pairwise ranking
+                </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSession({ ...session, isTimerRunning: !session.isTimerRunning })}
-              >
-                {session.isTimerRunning ? "Pause" : "Resume"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => {
-                  const activeIdeas = session.ideas.filter((idea) => idea.status === "active")
+                  if (!session) return
                   if (activeIdeas.length >= 2) {
                     navigateToView("compare", session.id)
                   } else {
                     alert("You need at least 2 active ideas to start ranking")
                   }
                 }}
+                className="rounded-lg px-5 py-3 whitespace-nowrap transition-transform flex-shrink-0"
+                style={{
+                  background: 'var(--gold)',
+                  color: 'white',
+                  border: 'none',
+                  fontFamily: 'var(--font-serif)',
+                  fontStyle: 'italic',
+                  fontSize: '0.95rem'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'scale(1.04)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
               >
-                Review Ideas
-              </Button>
+                Rank them →
+              </button>
             </div>
-          </div>
-        </div>
-
-        <div className="max-w-6xl mx-auto p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Strategy Card */}
-            <div className="lg:col-span-1">
-              <div className="sticky top-6 space-y-4">
-                <Card className="border-2 border-amber-200 bg-amber-50">
-                  <CardContent className="p-6">
-                    <div className="text-center space-y-4">
-                      <div className="text-4xl">{getCategoryIcon(currentCard.category)}</div>
-                      <h2 className="text-sm font-medium text-gray-600 uppercase tracking-wide">Strategy Card</h2>
-                      <p className="text-xl font-semibold text-gray-800 leading-relaxed">{currentCard.text}</p>
-                      <div className="flex items-center justify-center space-x-2">
-                        <Badge className={getDifficultyColor(currentCard.difficulty)}>{currentCard.difficulty}</Badge>
-                        <Badge variant="outline">{currentCard.category}</Badge>
-                      </div>
-                      <Button onClick={newCard} variant="outline" className="w-full mt-4 bg-transparent">
-                        <RotateCcw className="h-4 w-4 mr-2" />
-                        Next Card
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">How to Use</CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-sm text-gray-600 space-y-2">
-                    <p>
-                      Let this strategy card guide your thinking. It doesn't need to be literal—use it as inspiration.
-                    </p>
-                    <p>Write down any ideas that come to mind, no matter how wild or impractical they seem.</p>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-
-            {/* Idea Capture */}
-            <div className="lg:col-span-2 space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <BookOpen className="h-5 w-5" />
-                    <span>Capture Your Ideas</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {showFileUpload && (
-                    <div className="border-t pt-4">
-                      <FileUpload onFileUpload={handleFileUpload} />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Your Idea</label>
-                    <Textarea
-                      placeholder="Write your idea here... anything goes! (Press Enter to submit)"
-                      value={currentIdea}
-                      onChange={(e) => setCurrentIdea(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault()
-                          if (currentIdea.trim() && (session.isTimerRunning || session.timer > 0)) {
-                            addIdea()
-                          }
-                        }
-                      }}
-                      className="min-h-32"
-                      disabled={!session.isTimerRunning && session.timer === 0}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes & Context (optional)</label>
-                    <Textarea
-                      placeholder="Add any notes about where this came from or what you're thinking..."
-                      value={currentNotes}
-                      onChange={(e) => setCurrentNotes(e.target.value)}
-                      className="min-h-20"
-                      disabled={!session.isTimerRunning && session.timer === 0}
-                    />
-                  </div>
-
-                  {sessionUploadedFiles.length > 0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                      <p className="text-sm font-medium text-amber-900 mb-2">Attached files:</p>
-                      <div className="space-y-1">
-                        {sessionUploadedFiles.map((file) => (
-                          <p key={file.url} className="text-xs text-amber-800">
-                            {file.name}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex space-x-2">
-                    <Button
-                      onClick={addIdea}
-                      disabled={!currentIdea.trim() || (!session.isTimerRunning && session.timer === 0)}
-                      className="flex-1 bg-amber-600 hover:bg-amber-700"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Idea
-                    </Button>
-                    <Button
-                      onClick={() => setShowFileUpload(!showFileUpload)}
-                      variant="outline"
-                      size="icon"
-                      className="bg-transparent"
-                    >
-                      <Paperclip className="h-4 w-4" />
-                    </Button>
-                    <Button onClick={newCard} variant="outline" className="flex-1 bg-transparent">
-                      <RotateCcw className="h-4 w-4 mr-2" />
-                      New Card
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Ideas Grid - all ideas in same list, discarded greyed out */}
-              {(activeIdeas.length > 0 || discardedIdeas.length > 0) && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Ideas Captured</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      {[...activeIdeas, ...discardedIdeas].map((idea) => {
-                        const isDiscarded = idea.status === "discarded"
-                        return (
-                        <div
-                          key={idea.id}
-                          className={`border rounded-lg p-4 transition-colors ${
-                            isDiscarded
-                              ? "border-gray-300 bg-gray-50 opacity-75"
-                              : "border-gray-200 hover:bg-gray-50"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-lg">
-                                {getCategoryIcon(STRATEGY_CARDS.find((c) => c.id === idea.cardId)?.category || "")}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                {new Date(idea.timestamp).toLocaleTimeString()}
-                              </span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              {isDiscarded ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => restoreFromMisfits(idea.id)}
-                                  className="h-7 text-xs text-green-600 hover:bg-green-50"
-                                >
-                                  <RotateCcw className="h-3 w-3 mr-1" />
-                                  Restore Idea
-                                </Button>
-                              ) : (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => selectIdea(idea.id)}
-                                    className="h-8 w-8 p-0"
-                                  >
-                                    <Heart className="h-4 w-4 text-gray-400 hover:text-red-500" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => discardIdea(idea.id)}
-                                    className="h-8 w-8 p-0"
-                                    title="Send to Island of Misfit Ideas"
-                                  >
-                                    <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-600" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          <p className={`text-sm mb-2 ${isDiscarded ? "text-gray-600 line-through" : "text-gray-800"}`}>{idea.content}</p>
-                          {idea.notes && (
-                            <p className={`text-xs italic ${isDiscarded ? "text-gray-500 line-through" : "text-gray-600"}`}>"{idea.notes}"</p>
-                          )}
-                          {idea.attachedFiles && idea.attachedFiles.length > 0 && (
-                            <div className="mt-2 pt-2 border-t border-gray-200">
-                              <p className="text-xs text-gray-600 font-medium">Attachments:</p>
-                              <div className="text-xs text-gray-500 space-y-1">
-                                {idea.attachedFiles.map((file) => (
-                                  <a key={file.url} href={file.url} target="_blank" rel="noopener noreferrer">
-                                    {file.name}
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </div>
+          )}
         </div>
       </div>
     )

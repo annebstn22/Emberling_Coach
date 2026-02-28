@@ -42,6 +42,7 @@ import {
 } from "lucide-react"
 
 import Link from "next/link"
+import SharedNav from "@/components/shared-nav"
 import { supabase } from "@/lib/supabase"
 import type { User } from "@supabase/supabase-js"
 import ThreaderEmbedded from "./threader-embedded"
@@ -1551,38 +1552,8 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
   // If we have initialProjectId, we should never show dashboard (even if state is still "dashboard" temporarily)
   if (currentState === "dashboard" && !initialProjectId && !currentProject) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/">
-                <Home className="h-4 w-4 mr-2" />
-                Tool Select
-                </Link>
-              </Button>
-              <Home className="h-6 w-6 text-blue-600" />
-              <h1 className="text-xl font-medium text-gray-800">Writing Coach Dashboard</h1>
-              <span className="text-sm text-gray-600">Welcome, {user?.user_metadata?.name || user?.email}!</span>
-            </div>
-            <div className="flex items-center space-x-4">
-              <Button onClick={() => setCurrentState("setup")}>
-                <Plus className="h-4 w-4 mr-2" />
-                New Project
-              </Button>
-              <Button variant="outline" size="sm" asChild>
-                <Link href="/dashboard">
-                  <Home className="h-4 w-4 mr-2" />
-                  My Projects
-                </Link>
-              </Button>
-              <Button onClick={onLogout} variant="outline" size="sm">
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="coach" onLogout={onLogout} />
 
         <div className="max-w-6xl mx-auto p-6">
           {projects.length === 0 ? (
@@ -1964,16 +1935,13 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
   const showFeedbackPanel = currentTask?.feedback && (currentTask?.actionablePoints?.length ?? 0) > 0
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3">
+    <div className="min-h-screen bg-[#f7f4ee]">
+      <SharedNav activeTool="coach" onLogout={onLogout} />
+      {/* Sub-header with task info */}
+      <div className="bg-white border-b border-[#e0dbd0] px-4 py-2">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <Button variant="ghost" size="sm" onClick={goToDashboard}>
-              <Home className="h-4 w-4 mr-2" />
-              Dashboard
-            </Button>
-            <h1 className="text-lg font-medium text-gray-800">
+            <h1 className="text-lg font-medium text-[#1a1814]">
               {currentProject?.coachMode === "baymax"
                 ? "🤖 Baymax Coach"
                 : currentProject?.coachMode === "edna"
@@ -1989,7 +1957,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
           </div>
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Coach:</span>
+              <span className="text-sm text-[#9a948a]">Coach:</span>
               <Badge variant="outline" className="text-xs">
                 {currentProject?.coachMode === "baymax"
                   ? "🤖 Baymax"

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import ThreaderApp from "@/components/threader-app"
 import { useAuth } from "@/components/auth-provider"
 
-export default function ThreaderPage() {
+function ThreaderPageContent() {
   const { user, loading, signOut } = useAuth()
   const router = useRouter()
 
@@ -28,16 +28,22 @@ export default function ThreaderPage() {
   }
 
   return (
+    <ThreaderApp
+      user={user}
+      onLogout={signOut}
+      onBack={() => router.push("/")}
+    />
+  )
+}
+
+export default function ThreaderPage() {
+  return (
     <Suspense fallback={
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-500">Loading...</div>
       </div>
     }>
-      <ThreaderApp
-        user={user}
-        onLogout={signOut}
-        onBack={() => router.push("/")}
-      />
+      <ThreaderPageContent />
     </Suspense>
   )
 }

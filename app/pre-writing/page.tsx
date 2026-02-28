@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import PreWritingIdeation from "@/components/pre-writing-ideation"
 import { useAuth } from "@/components/auth-provider"
 
-export default function PreWritingPage() {
+function PreWritingPageContent() {
   const { user, loading, signOut } = useAuth()
   const router = useRouter()
 
@@ -28,16 +28,22 @@ export default function PreWritingPage() {
   }
 
   return (
+    <PreWritingIdeation
+      user={user}
+      onLogout={signOut}
+      onBack={() => router.push("/")}
+    />
+  )
+}
+
+export default function PreWritingPage() {
+  return (
     <Suspense fallback={
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-500">Loading...</div>
       </div>
     }>
-      <PreWritingIdeation
-        user={user}
-        onLogout={signOut}
-        onBack={() => router.push("/")}
-      />
+      <PreWritingPageContent />
     </Suspense>
   )
 }

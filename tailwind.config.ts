@@ -13,6 +13,25 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Prototype colors
+        'prototype-bg': 'var(--bg)',
+        'prototype-surface': 'var(--surface)',
+        'prototype-border': 'var(--border)',
+        'prototype-border2': 'var(--border2)',
+        'prototype-ink': 'var(--ink)',
+        'prototype-ink2': 'var(--ink2)',
+        'prototype-muted': 'var(--muted)',
+        'prototype-gold': 'var(--gold)',
+        'prototype-gold-bg': 'var(--gold-bg)',
+        'prototype-gold-bdr': 'var(--gold-bdr)',
+        'prototype-blue': 'var(--blue)',
+        'prototype-blue-bg': 'var(--blue-bg)',
+        'prototype-blue-bdr': 'var(--blue-bdr)',
+        'prototype-green': 'var(--green)',
+        'prototype-green-bg': 'var(--green-bg)',
+        'prototype-green-bdr': 'var(--green-bdr)',
+        'prototype-red': 'var(--red)',
+        // Existing shadcn/ui colors
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {
@@ -63,6 +82,10 @@ const config: Config = {
           border: 'hsl(var(--sidebar-border))',
           ring: 'hsl(var(--sidebar-ring))',
         },
+      },
+      fontFamily: {
+        serif: ['var(--font-serif)', 'serif'],
+        mono: ['var(--font-mono)', 'monospace'],
       },
       borderRadius: {
         lg: 'var(--radius)',

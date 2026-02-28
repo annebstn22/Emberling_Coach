@@ -95,17 +95,17 @@ export default function HomePage() {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
+        <Card className="w-full max-w-md" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl font-light text-gray-800">
+            <CardTitle className="text-2xl font-light" style={{ fontFamily: 'var(--font-serif)', color: 'var(--ink)' }}>
               {authMode === "login"
                 ? "Welcome Back"
                 : authMode === "reset"
                   ? "Reset Password"
                   : "Create Account"}
             </CardTitle>
-            <p className="text-gray-600 mt-2">
+            <p className="mt-2" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>
               {authMode === "login"
                 ? "Sign in to your writing coach account"
                 : authMode === "reset"
@@ -117,7 +117,7 @@ export default function HomePage() {
             <form onSubmit={authMode === "reset" ? handleResetPassword : handleAuth} className="space-y-4">
               {authMode === "signup" && (
                 <div>
-                  <Label htmlFor="name">Full Name</Label>
+                  <Label htmlFor="name" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Full Name</Label>
                   <Input
                     id="name"
                     type="text"
@@ -125,11 +125,13 @@ export default function HomePage() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     required
+                    className="mt-1"
+                    style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface)', borderColor: 'var(--border)' }}
                   />
                 </div>
               )}
               <div>
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Email</Label>
                 <Input
                   id="email"
                   type="email"
@@ -137,11 +139,13 @@ export default function HomePage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  className="mt-1"
+                  style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface)', borderColor: 'var(--border)' }}
                 />
               </div>
               {authMode !== "reset" && (
                 <div>
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Password</Label>
                   <Input
                     id="password"
                     type="password"
@@ -149,21 +153,34 @@ export default function HomePage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+                    className="mt-1"
+                    style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface)', borderColor: 'var(--border)' }}
                   />
                   {authMode === "signup" && (
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs mt-1" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
                       Must be at least 8 characters with a number and capital letter
                     </p>
                   )}
                 </div>
               )}
-              {authError && <div className="text-red-600 text-sm text-center">{authError}</div>}
+              {authError && <div className="text-sm text-center" style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{authError}</div>}
               {resetEmailSent && (
-                <div className="text-green-600 text-sm text-center bg-green-50 border border-green-200 rounded p-3">
+                <div className="text-sm text-center rounded p-3" style={{ color: 'var(--green)', background: 'var(--green-bg)', borderColor: 'var(--green-bdr)', border: '1px solid', fontFamily: 'var(--font-mono)' }}>
                   Password reset email sent! Check your inbox.
                 </div>
               )}
-              <Button type="submit" className="w-full" size="lg">
+              <Button 
+                type="submit" 
+                className="w-full" 
+                size="lg"
+                style={{ 
+                  background: 'var(--ink)', 
+                  color: 'var(--bg)', 
+                  border: 'none',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.875rem'
+                }}
+              >
                 {authMode === "login" ? (
                   <>
                     <LogIn className="h-4 w-4 mr-2" />
@@ -191,7 +208,8 @@ export default function HomePage() {
                     setAuthError("")
                     setResetEmailSent(false)
                   }}
-                  className="text-blue-600 hover:text-blue-700 text-sm block w-full"
+                  className="text-sm block w-full"
+                  style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)' }}
                 >
                   Forgot password?
                 </button>
@@ -204,7 +222,8 @@ export default function HomePage() {
                     setAuthError("")
                     setResetEmailSent(false)
                   }}
-                  className="text-blue-600 hover:text-blue-700 text-sm block w-full"
+                  className="text-sm block w-full"
+                  style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)' }}
                 >
                   Back to login
                 </button>
@@ -217,7 +236,8 @@ export default function HomePage() {
                     setAuthError("")
                     setResetEmailSent(false)
                   }}
-                  className="text-blue-600 hover:text-blue-700 text-sm"
+                  className="text-sm"
+                  style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)' }}
                 >
                   {authMode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
                 </button>
@@ -230,48 +250,312 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-      <div className="max-w-2xl w-full">
+    <div 
+      className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden"
+      style={{ 
+        background: '#0c0b09',
+        padding: '3rem 1.5rem'
+      }}
+    >
+      {/* Radial gradient effect */}
+      <div 
+        className="absolute top-0 left-1/2 transform -translate-x-1/2 pointer-events-none"
+        style={{
+          width: '900px',
+          height: '500px',
+          background: 'radial-gradient(ellipse, #1f1a0e 0%, transparent 68%)',
+          marginTop: '-100px'
+        }}
+      />
+      
+      <div className="max-w-[860px] w-full relative z-10">
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-light text-white mb-2">
-            Welcome, {user.user_metadata?.name || user.email}
+          <div className="text-xs uppercase tracking-wider mb-3" style={{ color: '#5a5650', fontFamily: 'var(--font-mono)', letterSpacing: '0.2em' }}>
+            A writing toolkit
+          </div>
+          <h1 
+            className="text-center mb-2"
+            style={{ 
+              fontFamily: 'var(--font-serif)',
+              fontSize: 'clamp(2.8rem, 7vw, 5rem)',
+              fontWeight: 300,
+              color: '#f5f0e8',
+              letterSpacing: '-0.02em',
+              lineHeight: 1
+            }}
+          >
+            <em>Emberling</em>
           </h1>
-          <p className="text-slate-400">Choose your writing tool</p>
+          <p 
+            className="text-center mb-12"
+            style={{ 
+              fontSize: '0.8rem',
+              color: '#5a5650',
+              letterSpacing: '0.04em',
+              fontFamily: 'var(--font-mono)'
+            }}
+          >
+            Think it. Order it. Write it.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          {/* Ideation Card */}
           <Link href="/pre-writing" className="group cursor-pointer block">
-            <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-8 transition-all hover:bg-white/15 hover:border-white/30 h-full flex flex-col justify-between">
-              <div>
-                <div className="h-16 w-16 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                  <Lightbulb className="h-8 w-8 text-white" />
-                </div>
-                <h2 className="text-2xl font-light text-white mb-3">Pre-Writing Ideation</h2>
-                <p className="text-slate-300 leading-relaxed">
-                  Unlock creativity with strategy cards inspired by Oblique Strategies. Explore, refine, and organize
-                  your best ideas.
-                </p>
+            <div 
+              className="rounded-2xl p-7 transition-all flex flex-col relative overflow-hidden h-full"
+              style={{
+                background: '#141310',
+                border: '1px solid #2a2720',
+                borderRadius: '16px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)'
+                e.currentTarget.style.boxShadow = '0 20px 50px rgba(0,0,0,.6)'
+                e.currentTarget.style.borderColor = '#6b5820'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = 'none'
+                e.currentTarget.style.borderColor = '#2a2720'
+              }}
+            >
+              <div 
+                className="mb-5"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontStyle: 'italic',
+                  fontSize: '1.15rem',
+                  color: '#7a7268',
+                  lineHeight: 1.4,
+                  minHeight: '3.5rem'
+                }}
+              >
+                "I have a blank page and no idea where to start."
               </div>
-              <div className="mt-8 flex items-center text-amber-400 font-medium group-hover:translate-x-2 transition-transform">
-                Get Started <ArrowRight className="h-4 w-4 ml-2" />
+              <div className="w-6 h-px mb-5" style={{ background: '#c9a84c' }} />
+              <div 
+                className="mb-2"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontSize: '1.5rem',
+                  fontWeight: 600,
+                  color: '#c9a84c',
+                  lineHeight: 1.1
+                }}
+              >
+                💡 Ideation
+              </div>
+              <div 
+                className="mb-5 flex-1"
+                style={{ 
+                  fontSize: '0.75rem',
+                  color: '#5a5650',
+                  lineHeight: 1.55,
+                  fontFamily: 'var(--font-mono)'
+                }}
+              >
+                Divergent thinking cards push you past the obvious. Dump every thought, then let pairwise comparison surface your strongest ideas.
+              </div>
+              <div 
+                className="flex items-center gap-2 mt-5"
+                style={{ 
+                  fontSize: '0.72rem',
+                  color: '#c9a84c',
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-mono)',
+                  transition: 'gap 0.2s'
+                }}
+              >
+                Start thinking <span>→</span>
               </div>
             </div>
           </Link>
 
-          <Link href="/writing-coach" className="group cursor-pointer block">
-            <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-8 transition-all hover:bg-white/15 hover:border-white/30 h-full flex flex-col justify-between">
-              <div>
-                <div className="h-16 w-16 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                  <FileText className="h-8 w-8 text-white" />
-                </div>
-                <h2 className="text-2xl font-light text-white mb-3">Writing Coach</h2>
-                <p className="text-slate-300 leading-relaxed">
-                  Structured writing practice with AI feedback. Break down complex tasks and track your progress with
-                  personalized coaching.
-                </p>
+          {/* Threader Card */}
+          <Link href="/threader" className="group cursor-pointer block">
+            <div 
+              className="rounded-2xl p-7 transition-all flex flex-col relative overflow-hidden h-full"
+              style={{
+                background: '#141310',
+                border: '1px solid #2a2720',
+                borderRadius: '16px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)'
+                e.currentTarget.style.boxShadow = '0 20px 50px rgba(0,0,0,.6)'
+                e.currentTarget.style.borderColor = '#2d5a7a'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = 'none'
+                e.currentTarget.style.borderColor = '#2a2720'
+              }}
+            >
+              <div 
+                className="mb-5"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontStyle: 'italic',
+                  fontSize: '1.15rem',
+                  color: '#7a7268',
+                  lineHeight: 1.4,
+                  minHeight: '3.5rem'
+                }}
+              >
+                "I know what I want to say — just not in what order."
               </div>
-              <div className="mt-8 flex items-center text-blue-400 font-medium group-hover:translate-x-2 transition-transform">
-                Get Started <ArrowRight className="h-4 w-4 ml-2" />
+              <div className="w-6 h-px mb-5" style={{ background: '#6ab0d4' }} />
+              <div 
+                className="mb-2"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontSize: '1.5rem',
+                  fontWeight: 600,
+                  color: '#6ab0d4',
+                  lineHeight: 1.1
+                }}
+              >
+                🧵 Threader
+              </div>
+              <div 
+                className="mb-5 flex-1"
+                style={{ 
+                  fontSize: '0.75rem',
+                  color: '#5a5650',
+                  lineHeight: 1.55,
+                  fontFamily: 'var(--font-mono)'
+                }}
+              >
+                Type the points you need to cover. The Threader gives you the sequence that flows — and tells you why that order works.
+              </div>
+              <div 
+                className="flex items-center gap-2 mt-5"
+                style={{ 
+                  fontSize: '0.72rem',
+                  color: '#6ab0d4',
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-mono)',
+                  transition: 'gap 0.2s'
+                }}
+              >
+                Find the order <span>→</span>
+              </div>
+            </div>
+          </Link>
+
+          {/* Writing Coach Card */}
+          <Link href="/writing-coach" className="group cursor-pointer block">
+            <div 
+              className="rounded-2xl p-7 transition-all flex flex-col relative overflow-hidden h-full"
+              style={{
+                background: '#141310',
+                border: '1px solid #2a2720',
+                borderRadius: '16px'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)'
+                e.currentTarget.style.boxShadow = '0 20px 50px rgba(0,0,0,.6)'
+                e.currentTarget.style.borderColor = '#27693a'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = 'none'
+                e.currentTarget.style.borderColor = '#2a2720'
+              }}
+            >
+              <div 
+                className="mb-5"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontStyle: 'italic',
+                  fontSize: '1.15rem',
+                  color: '#7a7268',
+                  lineHeight: 1.4,
+                  minHeight: '3.5rem'
+                }}
+              >
+                "I have a whole thing to write and need to go from zero to done."
+              </div>
+              <div className="w-6 h-px mb-5" style={{ background: '#6ecf9a' }} />
+              <div 
+                className="mb-2"
+                style={{ 
+                  fontFamily: 'var(--font-serif)',
+                  fontSize: '1.5rem',
+                  fontWeight: 600,
+                  color: '#6ecf9a',
+                  lineHeight: 1.1
+                }}
+              >
+                ✍️ Writing Coach
+              </div>
+              <div 
+                className="mb-5 flex-1"
+                style={{ 
+                  fontSize: '0.75rem',
+                  color: '#5a5650',
+                  lineHeight: 1.55,
+                  fontFamily: 'var(--font-mono)'
+                }}
+              >
+                Set your project, get a task breakdown. The Coach brings in the other two tools exactly when you need them.
+              </div>
+              <div className="flex gap-2 mb-5 flex-wrap items-center">
+                <span 
+                  className="text-xs uppercase"
+                  style={{ 
+                    fontSize: '0.58rem',
+                    letterSpacing: '0.12em',
+                    color: '#5a5650',
+                    fontFamily: 'var(--font-mono)',
+                    alignSelf: 'center'
+                  }}
+                >
+                  includes
+                </span>
+                <span 
+                  className="px-3 py-1 rounded-full text-xs border"
+                  style={{ 
+                    fontSize: '0.68rem',
+                    padding: '0.22rem 0.65rem',
+                    borderRadius: '50px',
+                    fontFamily: 'var(--font-mono)',
+                    fontWeight: 500,
+                    background: '#1a1608',
+                    borderColor: '#6b5820',
+                    color: '#c9a84c'
+                  }}
+                >
+                  💡 Ideation
+                </span>
+                <span 
+                  className="px-3 py-1 rounded-full text-xs border"
+                  style={{ 
+                    fontSize: '0.68rem',
+                    padding: '0.22rem 0.65rem',
+                    borderRadius: '50px',
+                    fontFamily: 'var(--font-mono)',
+                    fontWeight: 500,
+                    background: '#0d1520',
+                    borderColor: '#2d5a7a',
+                    color: '#6ab0d4'
+                  }}
+                >
+                  🧵 Threader
+                </span>
+              </div>
+              <div 
+                className="flex items-center gap-2 mt-5"
+                style={{ 
+                  fontSize: '0.72rem',
+                  color: '#6ecf9a',
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-mono)',
+                  transition: 'gap 0.2s'
+                }}
+              >
+                Start your project <span>→</span>
               </div>
             </div>
           </Link>
@@ -281,7 +565,12 @@ export default function HomePage() {
           <Button
             onClick={signOut}
             variant="outline"
-            className="border-slate-400 text-slate-300 hover:bg-slate-800 bg-transparent"
+            style={{ 
+              borderColor: 'var(--border)',
+              color: 'var(--muted)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.75rem'
+            }}
           >
             <LogOut className="h-4 w-4 mr-2" />
             Logout
