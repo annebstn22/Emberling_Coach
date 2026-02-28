@@ -128,6 +128,7 @@ export default function WritingCoachApp({
   const [customDuration, setCustomDuration] = useState<number[]>([20])
   const [previousWork, setPreviousWork] = useState("")
   const [allDraftWork, setAllDraftWork] = useState("")
+  const [showDraftModal, setShowDraftModal] = useState(false)
   const [coachMode, setCoachMode] = useState<CoachMode>("normal")
   const [gameMode, setGameMode] = useState(false)
   const [typingStats, setTypingStats] = useState<TypingStats>({
@@ -2016,63 +2017,76 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
       {/* Main Layout: Side Panel + Work Area */}
       <div className="grid grid-cols-[270px_1fr] min-h-[calc(100vh-105px)]">
         {/* Side Panel */}
-        <aside className="border-r border-[#e0dbd0] bg-white p-5 overflow-y-auto">
-          <div className="space-y-5">
-            {/* Project Info */}
-            <div>
-              <div className="text-[0.6rem] uppercase tracking-[0.1em] text-[#9a948a] mb-1">Current project</div>
-              <div className="font-serif text-[1.05rem] text-[#1a1814] leading-tight">{currentProject?.name}</div>
-            </div>
-
-            {/* Progress Bar */}
-            <div>
-              <div className="bg-[#e0dbd0] rounded h-1 overflow-hidden">
-                <div
-                  className="h-full bg-[#1a5c32] rounded transition-all duration-400"
-                  style={{ width: `${getProgressPercentage(currentProject!)}%` }}
-                />
+        <aside className="border-r border-[#e0dbd0] bg-white flex flex-col">
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="space-y-5">
+              {/* Project Info */}
+              <div>
+                <div className="text-[0.6rem] uppercase tracking-[0.1em] text-[#9a948a] mb-1">Current project</div>
+                <div className="font-serif text-[1.05rem] text-[#1a1814] leading-tight">{currentProject?.name}</div>
               </div>
-              <div className="text-[0.62rem] text-[#9a948a] mt-1.5">
-                {currentProject?.tasks.filter((t) => t.completed).length} of {currentProject?.tasks.length} tasks done
-              </div>
-            </div>
 
-            {/* Task List */}
-            <div>
-              <div className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2">Tasks</div>
-              <div className="flex flex-col gap-1">
-                {currentProject?.tasks.map((task, index) => (
+              {/* Progress Bar */}
+              <div>
+                <div className="bg-[#e0dbd0] rounded h-1 overflow-hidden">
                   <div
-                    key={task.id}
-                    onClick={() => handleTaskClick(index)}
-                    className={`flex items-start gap-2.5 px-2.5 py-2 rounded-[7px] cursor-pointer transition-colors border ${
-                      task.completed
-                        ? "opacity-50 border-transparent"
-                        : index === (currentProject?.currentTaskIndex ?? 0)
-                          ? "bg-[#f7f4ee] border-[#e0dbd0]"
-                          : "border-transparent hover:bg-[#f7f4ee]"
-                    }`}
-                  >
+                    className="h-full bg-[#1a5c32] rounded transition-all duration-400"
+                    style={{ width: `${getProgressPercentage(currentProject!)}%` }}
+                  />
+                </div>
+                <div className="text-[0.62rem] text-[#9a948a] mt-1.5">
+                  {currentProject?.tasks.filter((t) => t.completed).length} of {currentProject?.tasks.length} tasks done
+                </div>
+              </div>
+
+              {/* Task List */}
+              <div>
+                <div className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2">Tasks</div>
+                <div className="flex flex-col gap-1">
+                  {currentProject?.tasks.map((task, index) => (
                     <div
-                      className={`w-[15px] h-[15px] border-[1.5px] rounded flex-shrink-0 mt-0.5 flex items-center justify-center text-[0.52rem] transition-all ${
+                      key={task.id}
+                      onClick={() => handleTaskClick(index)}
+                      className={`flex items-start gap-2.5 px-2.5 py-2 rounded-[7px] cursor-pointer transition-colors border ${
                         task.completed
-                          ? "bg-[#1a5c32] border-[#1a5c32] text-white"
-                          : "border-[#c8c2b4]"
+                          ? "opacity-50 border-transparent"
+                          : index === (currentProject?.currentTaskIndex ?? 0)
+                            ? "bg-[#f7f4ee] border-[#e0dbd0]"
+                            : "border-transparent hover:bg-[#f7f4ee]"
                       }`}
                     >
-                      {task.completed ? "✓" : ""}
+                      <div
+                        className={`w-[15px] h-[15px] border-[1.5px] rounded flex-shrink-0 mt-0.5 flex items-center justify-center text-[0.52rem] transition-all ${
+                          task.completed
+                            ? "bg-[#1a5c32] border-[#1a5c32] text-white"
+                            : "border-[#c8c2b4]"
+                        }`}
+                      >
+                        {task.completed ? "✓" : ""}
+                      </div>
+                      <span
+                        className={`text-[0.75rem] leading-[1.35] ${
+                          task.completed ? "line-through text-[#9a948a]" : "text-[#4a4640]"
+                        }`}
+                      >
+                        {task.title}
+                      </span>
                     </div>
-                    <span
-                      className={`text-[0.75rem] leading-[1.35] ${
-                        task.completed ? "line-through text-[#9a948a]" : "text-[#4a4640]"
-                      }`}
-                    >
-                      {task.title}
-                    </span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
+          </div>
+
+          {/* Floating View Full Draft Button */}
+          <div className="border-t border-[#e0dbd0] p-4">
+            <button
+              onClick={() => setShowDraftModal(true)}
+              className="w-full flex items-center justify-center gap-2 bg-[#1a1814] text-[#f7f4ee] border-none rounded-lg py-2.5 px-4 font-mono text-xs cursor-pointer transition-opacity hover:opacity-85"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+              View Full Draft
+            </button>
           </div>
         </aside>
 
@@ -2115,17 +2129,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 </CardContent>
               </Card>
             )}
-            {/* Progress */}
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">Overall Progress</span>
-                  <span className="text-sm text-gray-600">{Math.round(getProgressPercentage(currentProject!))}%</span>
-                </div>
-                <Progress value={getProgressPercentage(currentProject!)} className="h-2" />
-              </CardContent>
-            </Card>
-
             {/* Game Mode Racing UI for Draft Tasks */}
             {isDraftTask && gameMode && (
               <Card className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
@@ -2293,6 +2296,33 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       </Button>
                     </div>
                   </div>
+                </div>
+
+                {/* Work Area */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Your work for this task:</label>
+                  <Textarea
+                    placeholder={
+                      currentProject?.coachMode === "baymax"
+                        ? "Begin writing here... Focus on progress, not perfection. I am here to support you."
+                        : currentProject?.coachMode === "edna"
+                          ? "Start writing NOW, darling! No perfectionist dawdling - just get the words down!"
+                          : "Start writing here... Focus on progress, not perfection!"
+                    }
+                    value={taskInput}
+                    onChange={(e) => setTaskInput(e.target.value)}
+                    className="min-h-48"
+                    disabled={!isTimerRunning && timeRemaining > 0}
+                  />
+                  {backspaceDisabled && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {currentProject?.coachMode === "baymax"
+                        ? "⚠️ Backspace disabled - optimal writing flow protocol active"
+                        : currentProject?.coachMode === "edna"
+                          ? "⚠️ No deleting allowed - write fast, edit later!"
+                          : "⚠️ Backspace is disabled - write fast, edit slow!"}
+                    </p>
+                  )}
                 </div>
 
                 {/* Tool Row */}
@@ -2606,33 +2636,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                   </div>
                 )}
 
-                {/* Work Area */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Your work for this task:</label>
-                  <Textarea
-                    placeholder={
-                      currentProject?.coachMode === "baymax"
-                        ? "Begin writing here... Focus on progress, not perfection. I am here to support you."
-                        : currentProject?.coachMode === "edna"
-                          ? "Start writing NOW, darling! No perfectionist dawdling - just get the words down!"
-                          : "Start writing here... Focus on progress, not perfection!"
-                    }
-                    value={taskInput}
-                    onChange={(e) => setTaskInput(e.target.value)}
-                    className="min-h-48"
-                    disabled={!isTimerRunning && timeRemaining > 0}
-                  />
-                  {backspaceDisabled && (
-                    <p className="text-xs text-amber-600 mt-1">
-                      {currentProject?.coachMode === "baymax"
-                        ? "⚠️ Backspace disabled - optimal writing flow protocol active"
-                        : currentProject?.coachMode === "edna"
-                          ? "⚠️ No deleting allowed - write fast, edit later!"
-                          : "⚠️ Backspace is disabled - write fast, edit slow!"}
-                    </p>
-                  )}
-                </div>
-
                 {timeRemaining === 0 && (
                   <Button onClick={evaluateProgress} className="w-full" size="lg">
                     {currentProject?.coachMode === "baymax"
@@ -2645,74 +2648,80 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
               </CardContent>
             </Card>
 
-            {/* Full Draft */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Edit3 className="h-5 w-5" />
-                  <span>Complete Draft</span>
-                </CardTitle>
-                <p className="text-gray-600">View and edit all your draft content in one place</p>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Your complete draft ({allDraftWork.split(" ").filter((word) => word.length > 0).length} words):
-                    </label>
-                    <Textarea
-                      placeholder={
-                        currentProject?.coachMode === "baymax"
-                          ? "Your draft content will appear here as you complete draft tasks. I will monitor your progress."
-                          : currentProject?.coachMode === "edna"
-                            ? "Your draft content will appear here, darling. No peeking until you've done the work!"
-                            : "Your draft content will appear here as you complete draft tasks..."
-                      }
-                      value={allDraftWork}
-                      onChange={(e) => {
-                        setAllDraftWork(e.target.value)
-                        if (currentProject) {
-                          const updatedProject = { ...currentProject }
-                          const draftTasks = updatedProject.tasks.filter(
-                            (task) => task.focus === "draft" && task.completed,
-                          )
-                          if (draftTasks.length > 0) {
-                            const contentPerTask = Math.ceil(e.target.value.length / draftTasks.length)
-                            let currentIndex = 0
-                            draftTasks.forEach((task, index) => {
-                              const taskIndex = updatedProject.tasks.findIndex((t) => t.id === task.id)
-                              if (taskIndex !== -1) {
-                                const start = currentIndex
-                                const end = Math.min(currentIndex + contentPerTask, e.target.value.length)
-                                updatedProject.tasks[taskIndex].userWork = e.target.value.slice(start, end).trim()
-                                currentIndex = end
-                              }
-                            })
-                            setCurrentProject(updatedProject)
-                            setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-                          }
-                        }
-                      }}
-                      className="min-h-96"
-                    />
-                  </div>
-                  {allDraftWork && (
-                    <div className="text-sm text-gray-600">
-                      <p>
-                        {currentProject?.coachMode === "baymax"
-                          ? "This view combines all your completed draft tasks. Edit freely - changes will be saved to your individual draft tasks. I am monitoring your progress."
-                          : currentProject?.coachMode === "edna"
-                            ? "This combines all your draft work, sweetie. Edit away - but remember, done is better than perfect!"
-                            : "This view combines all your completed draft tasks. Edit freely - changes will be saved to your individual draft tasks."}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>
+
+      {/* Full Draft Modal */}
+      {showDraftModal && (
+        <div className="fixed inset-0 bg-black/45 z-[200] flex items-center justify-center" onClick={() => setShowDraftModal(false)}>
+          <div className="bg-white border border-[#e0dbd0] rounded-xl w-[90%] max-w-3xl max-h-[85vh] flex flex-col shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#e0dbd0]">
+              <div>
+                <div className="font-serif text-lg text-[#1a1814] flex items-center gap-2">
+                  <Edit3 className="h-4 w-4" />
+                  Complete Draft
+                </div>
+                <p className="text-xs text-[#9a948a] mt-0.5">
+                  {allDraftWork.split(" ").filter((word) => word.length > 0).length} words
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDraftModal(false)}
+                className="text-[#9a948a] hover:text-[#1a1814] transition-colors p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <Textarea
+                placeholder={
+                  currentProject?.coachMode === "baymax"
+                    ? "Your draft content will appear here as you complete draft tasks. I will monitor your progress."
+                    : currentProject?.coachMode === "edna"
+                      ? "Your draft content will appear here, darling. No peeking until you've done the work!"
+                      : "Your draft content will appear here as you complete draft tasks..."
+                }
+                value={allDraftWork}
+                onChange={(e) => {
+                  setAllDraftWork(e.target.value)
+                  if (currentProject) {
+                    const updatedProject = { ...currentProject }
+                    const draftTasks = updatedProject.tasks.filter(
+                      (task) => task.focus === "draft" && task.completed,
+                    )
+                    if (draftTasks.length > 0) {
+                      const contentPerTask = Math.ceil(e.target.value.length / draftTasks.length)
+                      let currentIndex = 0
+                      draftTasks.forEach((task, index) => {
+                        const taskIndex = updatedProject.tasks.findIndex((t) => t.id === task.id)
+                        if (taskIndex !== -1) {
+                          const start = currentIndex
+                          const end = Math.min(currentIndex + contentPerTask, e.target.value.length)
+                          updatedProject.tasks[taskIndex].userWork = e.target.value.slice(start, end).trim()
+                          currentIndex = end
+                        }
+                      })
+                      setCurrentProject(updatedProject)
+                      setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+                    }
+                  }
+                }}
+                className="min-h-[50vh] w-full"
+              />
+              {allDraftWork && (
+                <p className="text-sm text-[#9a948a] mt-3">
+                  {currentProject?.coachMode === "baymax"
+                    ? "This view combines all your completed draft tasks. Edit freely - changes will be saved to your individual draft tasks. I am monitoring your progress."
+                    : currentProject?.coachMode === "edna"
+                      ? "This combines all your draft work, sweetie. Edit away - but remember, done is better than perfect!"
+                      : "This view combines all your completed draft tasks. Edit freely - changes will be saved to your individual draft tasks."}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
