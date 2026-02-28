@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { X } from "lucide-react"
 
 interface ThreaderPoint {
@@ -41,10 +41,16 @@ export default function ThreaderEmbedded({
   onOrderingComplete,
   onPointsChange,
   initialPoints,
+  isCollapsed: externalIsCollapsed,
+  onToggleCollapse,
+  initialOrderingResult,
 }: {
   onOrderingComplete?: (orderedPoints: string[], bridges: string[], orderingResult: ThreaderResponse) => void
   onPointsChange?: (points: string[]) => void
   initialPoints?: string[]
+  isCollapsed?: boolean
+  onToggleCollapse?: () => void
+  initialOrderingResult?: ThreaderResponse
 }) {
   const [currentPoint, setCurrentPoint] = useState("")
   const [points, setPoints] = useState<ThreaderPoint[]>(
@@ -55,7 +61,69 @@ export default function ThreaderEmbedded({
     })) || []
   )
   const [isOrdering, setIsOrdering] = useState(false)
-  const [orderingResult, setOrderingResult] = useState<ThreaderResponse | null>(null)
+  const [internalCollapsed, setInternalCollapsed] = useState(false)
+  const [orderingResult, setOrderingResult] = useState<ThreaderResponse | null>(
+    initialOrderingResult || null
+  )
+  const prevInitialPointsRef = useRef<string>("")
+
+  const isCollapsed = externalIsCollapsed !== undefined ? externalIsCollapsed : internalCollapsed
+  const toggleCollapse = () => {
+    if (onToggleCollapse) {
+      onToggleCollapse()
+    } else {
+      setInternalCollapsed(!internalCollapsed)
+    }
+  }
+
+  // Sync ordering result when initialOrderingResult changes
+  useEffect(() => {
+    if (initialOrderingResult && initialOrderingResult !== orderingResult) {
+      setOrderingResult(initialOrderingResult)
+    }
+  }, [initialOrderingResult])
+
+  // Sync points when initialPoints changes (e.g., when feeding from ideation)
+  // But preserve ordering result if the points match the ordered points
+  useEffect(() => {
+    // Compare the stringified version to detect actual changes
+    const currentInitialPointsStr = JSON.stringify(initialPoints || [])
+    const prevInitialPointsStr = prevInitialPointsRef.current
+    
+    if (currentInitialPointsStr !== prevInitialPointsStr) {
+      prevInitialPointsRef.current = currentInitialPointsStr
+      
+      if (initialPoints && initialPoints.length > 0) {
+        const newPoints = initialPoints.map((text, idx) => ({
+          id: crypto.randomUUID(),
+          text,
+          originalIndex: idx,
+        }))
+        
+        // Check if the new points match the ordered points from initialOrderingResult
+        // If so, this is likely an update after ordering, so preserve the ordering result
+        const orderedPointsFromInitial = initialOrderingResult?.best_ordering?.ordered_points || []
+        const pointsMatchInitialOrdered = orderedPointsFromInitial.length > 0 && 
+          JSON.stringify(initialPoints) === JSON.stringify(orderedPointsFromInitial)
+        
+        setPoints(newPoints)
+        
+        // Only clear ordering result if:
+        // 1. Points don't match the ordered points from initialOrderingResult (meaning it's a real change)
+        // 2. AND there's no initialOrderingResult provided (meaning it's not being restored from parent)
+        if (!pointsMatchInitialOrdered && !initialOrderingResult) {
+          setOrderingResult(null)
+        } else if (initialOrderingResult) {
+          // If we have initialOrderingResult, always use it (it will be set by the other useEffect)
+          // This ensures the ordering result is preserved when points are synced after ordering
+        }
+      } else if (points.length > 0) {
+        // If initialPoints is cleared, clear our points too
+        setPoints([])
+        setOrderingResult(null)
+      }
+    }
+  }, [initialPoints, initialOrderingResult])
 
   const addPoint = () => {
     if (!currentPoint.trim()) return
@@ -103,7 +171,8 @@ export default function ThreaderEmbedded({
     }
 
     setIsOrdering(true)
-    setOrderingResult(null)
+    // Don't clear ordering result here - we'll set it with the new result
+    // Clearing it causes a flash where the result disappears
 
     try {
       const response = await fetch("/api/threader", {
@@ -122,6 +191,8 @@ export default function ThreaderEmbedded({
       setOrderingResult(data)
 
       // Call callback with ordered points, bridges, and full result
+      // Note: We don't include isCollapsed in the ordering result passed to the callback
+      // as it's metadata, not part of the actual API response
       if (onOrderingComplete && data.best_ordering) {
         onOrderingComplete(
           data.best_ordering.ordered_points,
@@ -132,15 +203,55 @@ export default function ThreaderEmbedded({
     } catch (error) {
       console.error("Error ordering points:", error)
       alert(error instanceof Error ? error.message : "Failed to order points")
+      // Only clear on error
+      setOrderingResult(null)
     } finally {
       setIsOrdering(false)
     }
   }
 
-  const showNudge = points.length >= 3 && !orderingResult
+  const showNudge = points.length >= 3 && !orderingResult && !isCollapsed
   const orderedPoints = orderingResult?.best_ordering?.ordered_points || []
   const bridges = orderingResult?.best_ordering?.bridges || []
 
+  // Collapsed view: show only the ordered points with bridges
+  if (isCollapsed && orderingResult?.best_ordering) {
+    return (
+      <div className="space-y-3">
+        <div className="bg-white border border-[#a8c8e8] rounded-lg overflow-hidden">
+          {orderedPoints.map((point, idx) => (
+            <div key={idx}>
+              <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm">
+                <span className="text-[0.54rem] text-[#1a4a6e] mt-0.5">{idx + 1}</span>
+                <div>
+                  <div className="text-[#1a1814] mb-1">{point}</div>
+                  <div className="font-serif italic text-xs text-[#9a948a] leading-snug">
+                    {REASONS[Math.min(idx, REASONS.length - 1)]}
+                  </div>
+                </div>
+              </div>
+              {idx < orderedPoints.length - 1 && bridges[idx] && (
+                <div className="px-3 py-1 text-xs text-[#1a4a6e] bg-[#eef4fa] border-b border-[#e0dbd0] italic pl-8">
+                  {bridges[idx]}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {/* Expand button */}
+        <div className="flex justify-end">
+          <button
+            onClick={toggleCollapse}
+            className="bg-[#f7f4ee] border border-[#e0dbd0] rounded-md px-3 py-1.5 font-mono text-xs text-[#1a1814] cursor-pointer transition-all hover:border-[#c8c2b4] whitespace-nowrap"
+          >
+            Edit
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Expanded view: show full interface
   return (
     <div className="space-y-3">
       {/* Points list */}
@@ -219,6 +330,18 @@ export default function ThreaderEmbedded({
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Done button - only show if we have an ordering result */}
+      {orderingResult?.best_ordering && (
+        <div className="flex justify-end">
+          <button
+            onClick={toggleCollapse}
+            className="bg-[#f7f4ee] border border-[#e0dbd0] rounded-md px-3 py-1.5 font-mono text-xs text-[#1a1814] cursor-pointer transition-all hover:border-[#c8c2b4] whitespace-nowrap"
+          >
+            ✓ Done
+          </button>
         </div>
       )}
     </div>

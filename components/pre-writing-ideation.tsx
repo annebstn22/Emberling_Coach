@@ -162,7 +162,11 @@ export default function PreWritingIdeation({
   const [session, setSession] = useState<IdeationSession | null>(null)
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionDescription, setSessionDescription] = useState("")
-  const [currentView, setCurrentView] = useState(viewFromUrl)
+  // If sessionIdFromUrl is present but viewFromUrl is dashboard, default to ranked
+  // Otherwise use the view from URL (which could be ideate, compare, ranked, review)
+  const initialView = sessionIdFromUrl && viewFromUrl === "dashboard" ? "ranked" : viewFromUrl
+  const [currentView, setCurrentView] = useState(initialView)
+  const [isLoadingSession, setIsLoadingSession] = useState(!!sessionIdFromUrl)
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
   const [currentNotes, setCurrentNotes] = useState("")
@@ -257,15 +261,8 @@ export default function PreWritingIdeation({
       })
       await saveSessionToSupabase(sessionWithLastView)
     }
-    pendingSessionIdRef.current = null
-    justNavigatedRef.current = true
-    setCurrentView("dashboard")
-    setSession(null)
-    router.replace("/pre-writing?view=dashboard")
-    setTimeout(() => {
-      justNavigatedRef.current = false
-      pendingSessionIdRef.current = null
-    }, 150)
+    // Navigate to unified dashboard
+    router.push("/dashboard")
   }
 
   const navigateToView = (view: typeof currentView, sessionId?: string) => {
@@ -289,6 +286,16 @@ export default function PreWritingIdeation({
     if (justNavigatedRef.current) return
     // Don't overwrite session view with non-session view when we have session (stale URL race)
     const sessionViews = ["ideate", "compare", "ranked", "review"]
+    // If we have a sessionIdFromUrl but viewFromUrl is dashboard, don't change to dashboard
+    // This allows the session loading effect to set the appropriate view
+    if (
+      sessionIdFromUrl &&
+      viewFromUrl === "dashboard" &&
+      session &&
+      sessionViews.includes(currentView)
+    ) {
+      return
+    }
     if (
       session &&
       sessionViews.includes(currentView) &&
@@ -297,7 +304,10 @@ export default function PreWritingIdeation({
     ) {
       return
     }
-    setCurrentView(viewFromUrl)
+    // Only set view from URL if it's not dashboard when we have a session from URL
+    if (!(sessionIdFromUrl && viewFromUrl === "dashboard" && session)) {
+      setCurrentView(viewFromUrl)
+    }
     if (!sessionIdFromUrl) {
       pendingSessionIdRef.current = null
     }
@@ -311,6 +321,16 @@ export default function PreWritingIdeation({
       const found = allSessions.find((s) => s.id === sessionIdFromUrl)
       if (found) {
         setSession(found)
+        setIsLoadingSession(false)
+        // Use the view from URL if it's a valid session view, otherwise use session's lastView or default
+        const sessionViews = ["ideate", "compare", "ranked", "review"]
+        const targetView = sessionViews.includes(viewFromUrl) 
+          ? viewFromUrl 
+          : (found.lastView || (found.isComplete ? "ranked" : "ideate"))
+        
+        if (targetView !== currentView) {
+          setCurrentView(targetView as typeof currentView)
+        }
       } else if (
         ["ideate", "compare", "ranked", "review"].includes(viewFromUrl) &&
         (!session || session.id !== sessionIdFromUrl)
@@ -320,7 +340,7 @@ export default function PreWritingIdeation({
     } else if (!sessionIdFromUrl && !pendingSessionIdRef.current) {
       setSession(null)
     }
-  }, [sessionIdFromUrl, allSessions, viewFromUrl, router, session?.id])
+  }, [sessionIdFromUrl, allSessions, viewFromUrl, router, session?.id, currentView])
 
   useEffect(() => {
     if (user?.id) {
@@ -731,6 +751,15 @@ export default function PreWritingIdeation({
     }
   }
 
+  // Show loading state if we're loading a session from URL
+  if (isLoadingSession && sessionIdFromUrl) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+        <div className="text-gray-500">Loading session...</div>
+      </div>
+    )
+  }
+
   if (currentView === "dashboard") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
@@ -743,10 +772,16 @@ export default function PreWritingIdeation({
               </Button>
               <h1 className="text-lg font-medium text-gray-800">Pre-Writing Ideation</h1>
             </div>
-            <Button variant="outline" size="sm" onClick={onLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Button variant="outline" size="sm" onClick={() => router.push("/dashboard")}>
+                <Home className="h-4 w-4 mr-2" />
+                My Projects
+              </Button>
+              <Button variant="outline" size="sm" onClick={onLogout}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Logout
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -903,9 +938,9 @@ export default function PreWritingIdeation({
               <h1 className="text-xl font-medium text-gray-800">Pre-Writing Ideation</h1>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={() => navigateToView("dashboard")} variant="outline" size="sm">
+              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Back
+                My Projects
               </Button>
               <Button onClick={onLogout} variant="outline" size="sm">
                 <LogOut className="h-4 w-4 mr-2" />
@@ -993,9 +1028,9 @@ export default function PreWritingIdeation({
               <Badge variant="outline">{activeIdeas.length} ideas</Badge>
             </div>
             <div className="flex items-center space-x-4">
-              <Button onClick={exitToDashboard} variant="outline" size="sm">
+              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Exit to Dashboard
+                My Projects
               </Button>
               <div className="text-center">
                 <div className="text-2xl font-mono font-bold text-amber-600">{formatTime(session.timer)}</div>
@@ -1262,9 +1297,9 @@ export default function PreWritingIdeation({
               <Badge variant="outline">{(session.ideas ?? []).length} total ideas</Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={exitToDashboard} variant="outline" size="sm">
+              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Exit to Dashboard
+                My Projects
               </Button>
               <Button onClick={() => navigateToView("ideate", session.id)} variant="outline" size="sm">
                 Continue Ideating
@@ -1443,9 +1478,9 @@ export default function PreWritingIdeation({
               </Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={exitToDashboard} variant="outline" size="sm">
+              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Exit to Dashboard
+                My Projects
               </Button>
               <Button
                 variant="outline"
@@ -1474,7 +1509,19 @@ export default function PreWritingIdeation({
         </div>
       )
     }
-    const rankedIdeas = [...(session.ideas ?? [])].sort((a, b) => (b.thurstoneScore || 0) - (a.thurstoneScore || 0))
+    // Sort ideas: if they have thurstone scores, sort by score; otherwise sort by timestamp (order added)
+    const rankedIdeas = [...(session.ideas ?? [])].sort((a, b) => {
+      // If both have thurstone scores, sort by score
+      if (a.thurstoneScore !== undefined && b.thurstoneScore !== undefined) {
+        return (b.thurstoneScore || 0) - (a.thurstoneScore || 0)
+      }
+      // If neither has scores, sort by timestamp (order they were added)
+      if (a.thurstoneScore === undefined && b.thurstoneScore === undefined) {
+        return a.timestamp.getTime() - b.timestamp.getTime()
+      }
+      // If one has a score and one doesn't, put the one with score first
+      return (b.thurstoneScore !== undefined ? 1 : 0) - (a.thurstoneScore !== undefined ? 1 : 0)
+    })
 
     console.log(
       "[v0] Rendering ranked view:",
@@ -1497,9 +1544,9 @@ export default function PreWritingIdeation({
               </Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={exitToDashboard} variant="outline" size="sm">
+              <Button onClick={() => router.push("/dashboard")} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Exit to Dashboard
+                My Projects
               </Button>
               <Button
                 onClick={() => {
@@ -1523,8 +1570,9 @@ export default function PreWritingIdeation({
                 <span>Your Ideas Ranked</span>
               </CardTitle>
               <p className="text-sm text-gray-600 mt-2">
-                Ranked using Thurstone's Law of Comparative Judgment (Case V) - a statistical model that produces
-                interval-scaled scores from pairwise comparisons.
+                {rankedIdeas.some(i => i.thurstoneScore !== undefined)
+                  ? "Ranked using Thurstone's Law of Comparative Judgment (Case V) - a statistical model that produces interval-scaled scores from pairwise comparisons."
+                  : "Ideas displayed in the order they were added."}
               </p>
             </CardHeader>
             <CardContent>
@@ -1597,14 +1645,18 @@ export default function PreWritingIdeation({
                       {idea.notes && <p className="text-sm text-gray-600 italic mb-3">"{idea.notes}"</p>}
 
                       <div className="flex items-center space-x-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-medium">μ (Thurstone score):</span>
-                          <Badge variant="secondary">{idea.thurstoneScore?.toFixed(3) || "0.000"}</Badge>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-medium">Wins:</span>
-                          <Badge variant="outline">{idea.wins || 0}</Badge>
-                        </div>
+                        {idea.thurstoneScore !== undefined && (
+                          <div className="flex items-center space-x-2">
+                            <span className="font-medium">μ (Thurstone score):</span>
+                            <Badge variant="secondary">{idea.thurstoneScore.toFixed(3)}</Badge>
+                          </div>
+                        )}
+                        {idea.wins !== undefined && idea.wins > 0 && (
+                          <div className="flex items-center space-x-2">
+                            <span className="font-medium">Wins:</span>
+                            <Badge variant="outline">{idea.wins}</Badge>
+                          </div>
+                        )}
                       </div>
 
                       {idea.attachedFiles && idea.attachedFiles.length > 0 && (

@@ -72,7 +72,17 @@ export default function ThreaderApp({
   const viewFromUrl = (searchParams.get("view") as "dashboard" | "session") || "dashboard"
   const sessionIdFromUrl = searchParams.get("session")
 
-  const [currentView, setCurrentView] = useState(viewFromUrl)
+  // If sessionIdFromUrl is present, default to "session" instead of "dashboard" to avoid flashing dashboard
+  const initialView = sessionIdFromUrl && viewFromUrl === "dashboard" ? "session" : viewFromUrl
+  const [currentView, setCurrentView] = useState(initialView)
+  const [isLoadingSession, setIsLoadingSession] = useState(!!sessionIdFromUrl)
+
+  // Update currentView when viewFromUrl changes
+  useEffect(() => {
+    if (viewFromUrl !== currentView) {
+      setCurrentView(viewFromUrl)
+    }
+  }, [viewFromUrl, currentView])
   const [currentProject, setCurrentProject] = useState<ThreaderProject | null>(null)
   const [projectTitle, setProjectTitle] = useState("")
   const [currentPoint, setCurrentPoint] = useState("")
@@ -148,6 +158,27 @@ export default function ThreaderApp({
       loadProjectsFromSupabase()
     }
   }, [user?.id])
+
+  // Load session from URL when sessionIdFromUrl is present and projects are loaded
+  useEffect(() => {
+    if (sessionIdFromUrl && allProjects.length > 0) {
+      const project = allProjects.find((p) => p.id === sessionIdFromUrl)
+      if (project && (!currentProject || currentProject.id !== project.id)) {
+        // Set view to session if it's not already
+        if (currentView !== "session") {
+          setCurrentView("session")
+        }
+        loadSession(project.id)
+        setIsLoadingSession(false)
+      } else if (sessionIdFromUrl && allProjects.length > 0 && !project) {
+        // Session not found
+        setIsLoadingSession(false)
+      }
+    } else if (!sessionIdFromUrl) {
+      setIsLoadingSession(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionIdFromUrl, allProjects])
 
   // Auto-save project (but don't clear ordering on auto-save)
   useEffect(() => {
@@ -434,6 +465,15 @@ export default function ThreaderApp({
     return reasons[Math.min(position, reasons.length - 1)]
   }
 
+  // Show loading state if we're loading a session from URL
+  if (isLoadingSession && sessionIdFromUrl) {
+    return (
+      <div className="min-h-screen bg-[#f7f4ee] flex items-center justify-center">
+        <div className="text-[#9a948a]">Loading thread...</div>
+      </div>
+    )
+  }
+
   // Dashboard view
   if (currentView === "dashboard") {
     return (
@@ -447,10 +487,16 @@ export default function ThreaderApp({
               </Button>
               <h1 className="text-lg font-medium text-gray-800">🧵 Threader</h1>
             </div>
-            <Button variant="outline" size="sm" onClick={onLogout}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Button variant="outline" size="sm" onClick={() => router.push("/dashboard")}>
+                <Home className="h-4 w-4 mr-2" />
+                My Projects
+              </Button>
+              <Button variant="outline" size="sm" onClick={onLogout}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Logout
+              </Button>
+            </div>
           </div>
         </div>
 
