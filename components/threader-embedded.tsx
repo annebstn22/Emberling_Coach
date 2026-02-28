@@ -53,6 +53,7 @@ export default function ThreaderEmbedded({
   initialOrderingResult?: ThreaderResponse
 }) {
   const [currentPoint, setCurrentPoint] = useState("")
+  const pointTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [points, setPoints] = useState<ThreaderPoint[]>(
     initialPoints?.map((text, idx) => ({
       id: crypto.randomUUID(),
@@ -137,6 +138,10 @@ export default function ThreaderEmbedded({
     const updatedPoints = [...points, newPoint]
     setPoints(updatedPoints)
     setCurrentPoint("")
+    // Reset textarea height
+    if (pointTextareaRef.current) {
+      pointTextareaRef.current.style.height = 'auto'
+    }
     
     // Clear ordering result if points changed
     if (orderingResult) {
@@ -210,6 +215,14 @@ export default function ThreaderEmbedded({
     }
   }
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (pointTextareaRef.current) {
+      pointTextareaRef.current.style.height = 'auto'
+      pointTextareaRef.current.style.height = `${pointTextareaRef.current.scrollHeight}px`
+    }
+  }, [currentPoint])
+
   const showNudge = points.length >= 3 && !orderingResult && !isCollapsed
   const orderedPoints = orderingResult?.best_ordering?.ordered_points || []
   const bridges = orderingResult?.best_ordering?.bridges || []
@@ -224,7 +237,17 @@ export default function ThreaderEmbedded({
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm">
                 <span className="text-[0.54rem] text-[#1a4a6e] mt-0.5">{idx + 1}</span>
                 <div>
-                  <div className="text-[#1a1814] mb-1">{point}</div>
+                  <div 
+                    className="text-[#1a1814] mb-1"
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordWrap: 'break-word',
+                      overflowWrap: 'break-word',
+                      lineHeight: '1.5'
+                    }}
+                  >
+                    {point}
+                  </div>
                   <div className="font-serif italic text-xs text-[#9a948a] leading-snug">
                     {REASONS[Math.min(idx, REASONS.length - 1)]}
                   </div>
@@ -259,10 +282,25 @@ export default function ThreaderEmbedded({
         {points.map((point, idx) => (
           <div
             key={point.id}
-            className="flex items-center gap-2 px-3 py-2 bg-[#f7f4ee] border border-[#e0dbd0] rounded-md text-sm animate-in fade-in slide-in-from-top-2"
+            className="flex items-start gap-2 px-3 py-2 bg-[#f7f4ee] border border-[#e0dbd0] rounded-md text-sm animate-in fade-in slide-in-from-top-2"
           >
-            <span className="text-[0.54rem] text-[#1a4a6e] min-w-[14px]">{idx + 1}</span>
-            <span className="flex-1">{point.text}</span>
+            <span 
+              className="text-[0.54rem] text-[#1a4a6e] min-w-[14px] flex-shrink-0"
+              style={{ paddingTop: '0.125rem' }}
+            >
+              {idx + 1}
+            </span>
+            <span 
+              className="flex-1"
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word',
+                overflowWrap: 'break-word',
+                lineHeight: '1.5'
+              }}
+            >
+              {point.text}
+            </span>
             <button
               onClick={() => removePoint(point.id)}
               className="bg-none border-none text-[#9a948a] cursor-pointer text-xs hover:text-[#8b2020] transition-colors"
@@ -275,17 +313,29 @@ export default function ThreaderEmbedded({
 
       {/* Input row */}
       <div className="flex gap-2">
-        <input
-          type="text"
+        <textarea
+          ref={pointTextareaRef}
           value={currentPoint}
           onChange={(e) => setCurrentPoint(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
               addPoint()
             }
+            // Shift+Enter allows new line (default behavior)
           }}
           placeholder="a point for this paragraph…"
-          className="flex-1 bg-white border border-[#e0dbd0] rounded-md px-3 py-2 font-mono text-sm text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4]"
+          className="flex-1 bg-white border border-[#e0dbd0] rounded-md px-3 py-2 font-mono text-sm text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4] resize-none"
+          style={{
+            minHeight: '2.5rem',
+            lineHeight: '1.5',
+            whiteSpace: 'pre-wrap',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            maxHeight: '200px',
+            overflowY: 'auto'
+          }}
+          rows={1}
         />
         <button
           onClick={addPoint}
@@ -317,7 +367,17 @@ export default function ThreaderEmbedded({
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm animate-in fade-in slide-in-from-left-2">
                 <span className="text-[0.54rem] text-[#1a4a6e] mt-0.5">{idx + 1}</span>
                 <div>
-                  <div className="text-[#1a1814] mb-1">{point}</div>
+                  <div 
+                    className="text-[#1a1814] mb-1"
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordWrap: 'break-word',
+                      overflowWrap: 'break-word',
+                      lineHeight: '1.5'
+                    }}
+                  >
+                    {point}
+                  </div>
                   <div className="font-serif italic text-xs text-[#9a948a] leading-snug">
                     {REASONS[Math.min(idx, REASONS.length - 1)]}
                   </div>

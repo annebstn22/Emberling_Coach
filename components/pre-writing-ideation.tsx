@@ -195,6 +195,7 @@ export default function PreWritingIdeation({
   const [showFileUpload, setShowFileUpload] = useState(false)
   const [sessionUploadedFiles, setSessionUploadedFiles] = useState<UploadedFile[]>([])
   const [fileUploadKey, setFileUploadKey] = useState(0)
+  const ideaTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const [allSessions, setAllSessions] = useState<IdeationSession[]>([])
   const justNavigatedRef = useRef(false)
@@ -622,7 +623,19 @@ export default function PreWritingIdeation({
     setSessionUploadedFiles([])
     // Reset FileUpload component by changing key
     setFileUploadKey(prev => prev + 1)
+    // Reset textarea height
+    if (ideaTextareaRef.current) {
+      ideaTextareaRef.current.style.height = 'auto'
+    }
   }
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (ideaTextareaRef.current) {
+      ideaTextareaRef.current.style.height = 'auto'
+      ideaTextareaRef.current.style.height = `${ideaTextareaRef.current.scrollHeight}px`
+    }
+  }, [currentIdea])
 
   const newCard = () => {
     // Cycle to next card in shuffled order
@@ -1188,8 +1201,8 @@ export default function PreWritingIdeation({
 
           {/* Idea input row */}
           <div className="flex gap-3 mb-5">
-            <input
-              type="text"
+            <textarea
+              ref={ideaTextareaRef}
               value={currentIdea}
               onChange={(e) => setCurrentIdea(e.target.value)}
               onKeyDown={(e) => {
@@ -1202,15 +1215,23 @@ export default function PreWritingIdeation({
                   }
                   return false
                 }
+                // Shift+Enter allows new line (default behavior)
               }}
               placeholder="write an idea, any idea…"
-              className="flex-1 rounded-lg px-4 py-3 outline-none transition-colors"
+              className="flex-1 rounded-lg px-4 py-3 outline-none transition-colors resize-none"
               style={{
                 background: 'var(--surface)',
                 border: '1px solid var(--border)',
                 fontFamily: 'var(--font-mono)',
                 fontSize: '0.9rem',
-                color: 'var(--ink)'
+                color: 'var(--ink)',
+                minHeight: '2.5rem',
+                lineHeight: '1.5',
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word',
+                overflowWrap: 'break-word',
+                maxHeight: '200px',
+                overflowY: 'auto'
               }}
               onFocus={(e) => {
                 e.currentTarget.style.borderColor = 'var(--border2)'
@@ -1218,6 +1239,7 @@ export default function PreWritingIdeation({
               onBlur={(e) => {
                 e.currentTarget.style.borderColor = 'var(--border)'
               }}
+              rows={1}
             />
             <button
               onClick={(e) => {
@@ -1269,7 +1291,7 @@ export default function PreWritingIdeation({
               {activeIdeas.map((idea, i) => (
                 <div
                   key={idea.id}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg animate-popIn"
+                  className="flex items-start gap-3 px-4 py-3 rounded-lg animate-popIn"
                   style={{
                     background: 'var(--surface)',
                     border: '1px solid var(--border)',
@@ -1278,15 +1300,26 @@ export default function PreWritingIdeation({
                   }}
                 >
                   <span 
-                    className="text-xs min-w-[18px]"
+                    className="text-xs min-w-[18px] flex-shrink-0"
                     style={{ 
                       fontSize: '0.58rem',
-                      color: 'var(--muted)'
+                      color: 'var(--muted)',
+                      paddingTop: '0.125rem'
                     }}
                   >
                     {String(i + 1).padStart(2, '0')}
                   </span>
-                  <span className="flex-1">{idea.content}</span>
+                  <span 
+                    className="flex-1"
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordWrap: 'break-word',
+                      overflowWrap: 'break-word',
+                      lineHeight: '1.5'
+                    }}
+                  >
+                    {idea.content}
+                  </span>
                   <button
                     onClick={() => {
                       if (!session) return
@@ -1462,7 +1495,17 @@ export default function PreWritingIdeation({
                           </Button>
                         </div>
                       </div>
-                      <p className="text-gray-800 mb-2">{idea.content}</p>
+                      <p 
+                        className="text-gray-800 mb-2"
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                          lineHeight: '1.5'
+                        }}
+                      >
+                        {idea.content}
+                      </p>
                       {idea.notes && (
                         <p className="text-sm text-gray-600 italic border-l-2 border-amber-300 pl-3">{idea.notes}</p>
                       )}
@@ -1507,7 +1550,17 @@ export default function PreWritingIdeation({
                           </div>
                         </div>
                       </div>
-                      <p className="text-gray-800 font-medium">{idea.content}</p>
+                      <p 
+                        className="text-gray-800 font-medium"
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                          lineHeight: '1.5'
+                        }}
+                      >
+                        {idea.content}
+                      </p>
                       {idea.notes && <p className="text-sm text-gray-600 italic mt-2">{idea.notes}</p>}
                     </CardContent>
                   </Card>
@@ -1537,7 +1590,17 @@ export default function PreWritingIdeation({
                           Restore Idea
                         </Button>
                       </div>
-                      <p className="text-gray-600 line-through mb-2">{idea.content}</p>
+                      <p 
+                        className="text-gray-600 line-through mb-2"
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                          lineHeight: '1.5'
+                        }}
+                      >
+                        {idea.content}
+                      </p>
                       {idea.notes && (
                         <p className="text-sm text-gray-500 italic border-l-2 border-gray-300 pl-3 line-through">{idea.notes}</p>
                       )}
@@ -1699,6 +1762,10 @@ export default function PreWritingIdeation({
                         fontSize: ".9rem",
                         textDecoration: isDiscarded ? "line-through" : "none",
                         color: isDiscarded ? "var(--muted)" : "var(--ink)",
+                        whiteSpace: 'pre-wrap',
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
+                        lineHeight: '1.5'
                       }}
                     >
                       {idea.content}

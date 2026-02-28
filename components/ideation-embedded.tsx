@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 
 interface Idea {
   id: string
@@ -48,6 +48,7 @@ export default function IdeationEmbedded({
   const [shuffledCards] = useState(() => shuffleArray(STRATEGY_CARDS))
   const [currentPrompt, setCurrentPrompt] = useState(0)
   const [currentIdea, setCurrentIdea] = useState("")
+  const ideaTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [ideas, setIdeas] = useState<Idea[]>(
     initialIdeas?.map((text) => ({
@@ -66,6 +67,14 @@ export default function IdeationEmbedded({
     }
   }
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (ideaTextareaRef.current) {
+      ideaTextareaRef.current.style.height = 'auto'
+      ideaTextareaRef.current.style.height = `${ideaTextareaRef.current.scrollHeight}px`
+    }
+  }, [currentIdea])
+
   const cyclePrompt = () => {
     setCurrentPrompt((prev) => (prev + 1) % shuffledCards.length)
   }
@@ -82,6 +91,10 @@ export default function IdeationEmbedded({
     const updatedIdeas = [...ideas, newIdea]
     setIdeas(updatedIdeas)
     setCurrentIdea("")
+    // Reset textarea height
+    if (ideaTextareaRef.current) {
+      ideaTextareaRef.current.style.height = 'auto'
+    }
     
     // Notify parent of ideas change (only active/non-crossed ideas)
     if (onIdeasChange) {
@@ -180,14 +193,25 @@ export default function IdeationEmbedded({
         {ideas.map((idea, idx) => (
           <div
             key={idea.id}
-            className={`flex items-center gap-2 px-3 py-2 bg-[#f7f4ee] border border-[#e0dbd0] rounded-md text-sm transition-all ${
+            className={`flex items-start gap-2 px-3 py-2 bg-[#f7f4ee] border border-[#e0dbd0] rounded-md text-sm transition-all ${
               idea.crossed ? "bg-[#fdf5f5] border-[#e8c8c8]" : ""
             }`}
           >
-            <span className={`text-[0.54rem] min-w-[14px] flex-shrink-0 ${idea.crossed ? "text-[#9a948a]" : "text-[#b8860b]"}`}>
+            <span 
+              className={`text-[0.54rem] min-w-[14px] flex-shrink-0 ${idea.crossed ? "text-[#9a948a]" : "text-[#b8860b]"}`}
+              style={{ paddingTop: '0.125rem' }}
+            >
               {idx + 1}
             </span>
-            <span className={`flex-1 leading-snug ${idea.crossed ? "line-through text-[#9a948a]" : ""}`}>
+            <span 
+              className={`flex-1 ${idea.crossed ? "line-through text-[#9a948a]" : ""}`}
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordWrap: 'break-word',
+                overflowWrap: 'break-word',
+                lineHeight: '1.5'
+              }}
+            >
               {idea.text}
             </span>
             <button
@@ -210,17 +234,29 @@ export default function IdeationEmbedded({
 
       {/* Input Row */}
       <div className="flex gap-2">
-        <input
-          type="text"
+        <textarea
+          ref={ideaTextareaRef}
           value={currentIdea}
           onChange={(e) => setCurrentIdea(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
               addIdea()
             }
+            // Shift+Enter allows new line (default behavior)
           }}
           placeholder="an idea…"
-          className="flex-1 bg-white border border-[#e0dbd0] rounded-md px-3 py-2 font-mono text-sm text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4]"
+          className="flex-1 bg-white border border-[#e0dbd0] rounded-md px-3 py-2 font-mono text-sm text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4] resize-none"
+          style={{
+            minHeight: '2.5rem',
+            lineHeight: '1.5',
+            whiteSpace: 'pre-wrap',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            maxHeight: '200px',
+            overflowY: 'auto'
+          }}
+          rows={1}
         />
         <button
           onClick={addIdea}

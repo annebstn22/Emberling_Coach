@@ -8,7 +8,6 @@ import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Home,
   LogOut,
@@ -89,6 +88,7 @@ export default function ThreaderApp({
   const [projectTitle, setProjectTitle] = useState("")
   const [currentPoint, setCurrentPoint] = useState("")
   const [points, setPoints] = useState<ThreaderPoint[]>([])
+  const pointTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [allProjects, setAllProjects] = useState<ThreaderProject[]>([])
   const [isOrdering, setIsOrdering] = useState(false)
   const [orderingResult, setOrderingResult] = useState<ThreaderResponse | null>(null)
@@ -387,6 +387,10 @@ export default function ThreaderApp({
     }
 
     setCurrentPoint("")
+    // Reset textarea height
+    if (pointTextareaRef.current) {
+      pointTextareaRef.current.style.height = 'auto'
+    }
 
     // Clear ordering result if points changed (same logic as remove)
     if (orderingResult) {
@@ -534,6 +538,14 @@ export default function ThreaderApp({
   }
 
   // Get reasoning text for each position (matching prototype)
+  // Auto-resize textarea
+  useEffect(() => {
+    if (pointTextareaRef.current) {
+      pointTextareaRef.current.style.height = 'auto'
+      pointTextareaRef.current.style.height = `${pointTextareaRef.current.scrollHeight}px`
+    }
+  }, [currentPoint])
+
   const getReasoningText = (position: number, total: number): string => {
     const reasons = [
       "opens with the concrete — earns trust before asking anything of the reader",
@@ -704,10 +716,25 @@ export default function ThreaderApp({
                 {points.map((point, idx) => (
                   <div
                     key={point.id}
-                    className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-md"
+                    className="flex items-start gap-3 p-3 bg-gray-50 border border-gray-200 rounded-md"
                   >
-                    <span className="text-xs text-gray-500 w-4">{idx + 1}</span>
-                    <span className="flex-1 text-sm">{point.text}</span>
+                    <span 
+                      className="text-xs text-gray-500 w-4 flex-shrink-0"
+                      style={{ paddingTop: '0.125rem' }}
+                    >
+                      {idx + 1}
+                    </span>
+                    <span 
+                      className="flex-1 text-sm"
+                      style={{
+                        whiteSpace: 'pre-wrap',
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
+                        lineHeight: '1.5'
+                      }}
+                    >
+                      {point.text}
+                    </span>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -721,17 +748,29 @@ export default function ThreaderApp({
               </div>
 
               <div className="flex gap-2">
-                <Input
-                  className="flex-1"
+                <textarea
+                  ref={pointTextareaRef}
+                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm outline-none transition-colors focus:border-gray-400 resize-none"
                   placeholder="a point you need to make…"
                   value={currentPoint}
                   onChange={(e) => setCurrentPoint(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault()
                       addPoint()
                     }
+                    // Shift+Enter allows new line (default behavior)
                   }}
+                  style={{
+                    minHeight: '2.5rem',
+                    lineHeight: '1.5',
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    overflowWrap: 'break-word',
+                    maxHeight: '200px',
+                    overflowY: 'auto'
+                  }}
+                  rows={1}
                 />
                 <Button onClick={addPoint} className="bg-gray-900 text-white">
                   Add →
@@ -790,7 +829,17 @@ export default function ThreaderApp({
                     <div className="grid grid-cols-[20px_1fr] gap-3 p-4">
                       <span className="text-xs font-medium text-blue-600 mt-1">{idx + 1}</span>
                       <div>
-                        <div className="text-sm mb-2">{point}</div>
+                        <div 
+                          className="text-sm mb-2"
+                          style={{
+                            whiteSpace: 'pre-wrap',
+                            wordWrap: 'break-word',
+                            overflowWrap: 'break-word',
+                            lineHeight: '1.5'
+                          }}
+                        >
+                          {point}
+                        </div>
                         <div className="text-xs italic text-gray-500 font-serif">
                           {getReasoningText(idx, bestOrdering.ordered_points.length)}
                         </div>
