@@ -77,6 +77,7 @@ interface IdeationSession {
   isTimerRunning: boolean
   uploadedFiles: UploadedFile[]
   isComplete?: boolean
+  lastView?: "ideate" | "compare" | "ranked" | "review"
 }
 
 const STRATEGY_CARDS: StrategyCard[] = [
@@ -110,6 +111,38 @@ const STRATEGY_CARDS: StrategyCard[] = [
     category: "constraint",
     difficulty: "hard",
   },
+  { id: "21", text: "Remove the most important element", category: "constraint", difficulty: "hard" },
+  { id: "22", text: "Work with the opposite constraint", category: "constraint", difficulty: "medium" },
+  { id: "23", text: "What would this look like in a different medium?", category: "perspective", difficulty: "medium" },
+  { id: "24", text: "Make it 10x bigger/smaller", category: "constraint", difficulty: "easy" },
+  { id: "25", text: "Let death guide you.", category: "reframe", difficulty: "hard" },
+  { id: "26", text: "What would a two year old ask?", category: "perspective", difficulty: "easy" },
+  { id: "27", text: "Horizontal not vertical", category: "constraint", difficulty: "medium" },
+  { id: "28", text: "A new word, a new definition", category: "constraint", difficulty: "medium" },
+  { id: "29", text: "The complete opposite.", category: "reframe", difficulty: "medium" },
+  { id: "30", text: "No words allowed.", category: "constraint", difficulty: "hard" },
+  { id: "31", text: "Touch it.", category: "challenge", difficulty: "easy" },
+  { id: "32", text: "The tree house of your childhood dreams", category: "inspiration", difficulty: "easy" },
+  { id: "33", text: "Blanket fort", category: "inspiration", difficulty: "easy" },
+  { id: "34", text: "Make yourself laugh.", category: "challenge", difficulty: "medium" },
+  { id: "35", text: "Roll down the hill", category: "challenge", difficulty: "easy" },
+  { id: "36", text: "Tower of objects near you", category: "constraint", difficulty: "medium" },
+  { id: "37", text: "Quick. Type random keys. Interpret.", category: "random", difficulty: "medium" },
+  { id: "38", text: "Dance in the kitchen", category: "challenge", difficulty: "easy" },
+  { id: "39", text: "Hybrid hobbies", category: "remix", difficulty: "medium" },
+  { id: "40", text: "No capes, darling - Edna Mode", category: "reframe", difficulty: "medium" },
+  { id: "41", text: "Put the thing down, flip it, and reverse it - Missy Elliot", category: "remix", difficulty: "medium" },
+  { id: "42", text: "How does the caterpillar turn into a butterfly?", category: "perspective", difficulty: "medium" },
+  { id: "43", text: "Hardcover and publish", category: "constraint", difficulty: "medium" },
+  { id: "44", text: "5$ budget", category: "constraint", difficulty: "medium" },
+  { id: "45", text: "Jump off the cliff", category: "reframe", difficulty: "hard" },
+  { id: "46", text: "If it were a silent film", category: "constraint", difficulty: "medium" },
+  { id: "47", text: "Elevator music.", category: "constraint", difficulty: "medium" },
+  { id: "48", text: "Blindfolded", category: "challenge", difficulty: "hard" },
+  { id: "49", text: "Cut in two and swap", category: "remix", difficulty: "medium" },
+  { id: "50", text: "Collaborate with your imaginary friend", category: "perspective", difficulty: "medium" },
+  { id: "51", text: "Change the language", category: "constraint", difficulty: "medium" },
+  { id: "52", text: "Write me a beautiful lie", category: "reframe", difficulty: "hard" },
 ]
 
 export default function PreWritingIdeation({
@@ -194,6 +227,7 @@ export default function PreWritingIdeation({
             isTimerRunning: s.is_timer_running,
             uploadedFiles: s.uploaded_files || [],
             isComplete: s.is_complete,
+            lastView: s.last_view || undefined,
           }
         })
 
@@ -206,6 +240,32 @@ export default function PreWritingIdeation({
     } catch (error) {
       console.error("Error loading sessions:", error)
     }
+  }
+
+  const exitToDashboard = async () => {
+    if (session && ["ideate", "compare", "ranked", "review"].includes(currentView)) {
+      const sessionWithLastView = { ...session, lastView: currentView as IdeationSession["lastView"] }
+      setSession(sessionWithLastView)
+      setAllSessions((prev) => {
+        const idx = prev.findIndex((s) => s.id === session.id)
+        if (idx >= 0) {
+          const updated = [...prev]
+          updated[idx] = sessionWithLastView
+          return updated
+        }
+        return prev
+      })
+      await saveSessionToSupabase(sessionWithLastView)
+    }
+    pendingSessionIdRef.current = null
+    justNavigatedRef.current = true
+    setCurrentView("dashboard")
+    setSession(null)
+    router.replace("/pre-writing?view=dashboard")
+    setTimeout(() => {
+      justNavigatedRef.current = false
+      pendingSessionIdRef.current = null
+    }, 150)
   }
 
   const navigateToView = (view: typeof currentView, sessionId?: string) => {
@@ -325,6 +385,7 @@ export default function PreWritingIdeation({
             is_timer_running: session.isTimerRunning,
             is_complete: session.isComplete || false,
             uploaded_files: session.uploadedFiles || [],
+            last_view: session.lastView || null,
             created_at: session.createdAt.toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -525,10 +586,11 @@ export default function PreWritingIdeation({
     if (!user?.id || !session) return
 
     try {
-      // Save to misfit_ideas table
+      // Save to misfit_ideas table (idea_id links back for restore)
       const misfitIdea = {
         id: crypto.randomUUID(),
         user_id: user.id,
+        idea_id: idea.id,
         content: idea.content,
         notes: idea.notes || "",
         tags: [],
@@ -579,9 +641,12 @@ export default function PreWritingIdeation({
   }
 
   const restoreFromMisfits = async (ideaId: string) => {
-    if (!session) return
+    if (!session || !user?.id) return
 
     try {
+      // Remove from misfit_ideas table (if idea_id column exists)
+      await supabase.from("misfit_ideas").delete().eq("idea_id", ideaId).eq("user_id", user.id)
+
       // Mark the idea as active again
       const updatedIdeas = session.ideas.map((i) => 
         i.id === ideaId ? { ...i, status: "active" as const } : i
@@ -750,8 +815,25 @@ export default function PreWritingIdeation({
                       key={s.id}
                       className="hover:shadow-md transition-shadow cursor-pointer"
                       onClick={() => {
-                        setSession(s)
-                        navigateToView(s.isComplete ? "ranked" : "ideate", s.id)
+                        let sessionToOpen = s
+                        let targetView: typeof currentView = s.lastView || (s.isComplete ? "ranked" : "ideate")
+                        // If returning to compare, clear thurstone/wins so comparative judgement restarts
+                        if (targetView === "compare") {
+                          sessionToOpen = {
+                            ...s,
+                            ideas: (s.ideas ?? []).map((i) => ({
+                              ...i,
+                              thurstoneScore: undefined,
+                              wins: undefined,
+                              score: undefined,
+                            })),
+                          }
+                          setAllSessions((prev) =>
+                            prev.map((p) => (p.id === s.id ? sessionToOpen : p))
+                          )
+                        }
+                        setSession(sessionToOpen)
+                        navigateToView(targetView, s.id)
                       }}
                     >
                       <CardContent className="p-4">
@@ -911,6 +993,10 @@ export default function PreWritingIdeation({
               <Badge variant="outline">{activeIdeas.length} ideas</Badge>
             </div>
             <div className="flex items-center space-x-4">
+              <Button onClick={exitToDashboard} variant="outline" size="sm">
+                <Home className="h-4 w-4 mr-2" />
+                Exit to Dashboard
+              </Button>
               <div className="text-center">
                 <div className="text-2xl font-mono font-bold text-amber-600">{formatTime(session.timer)}</div>
                 <div className="text-xs text-gray-600">remaining</div>
@@ -996,9 +1082,17 @@ export default function PreWritingIdeation({
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Your Idea</label>
                     <Textarea
-                      placeholder="Write your idea here... anything goes!"
+                      placeholder="Write your idea here... anything goes! (Press Enter to submit)"
                       value={currentIdea}
                       onChange={(e) => setCurrentIdea(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault()
+                          if (currentIdea.trim() && (session.isTimerRunning || session.timer > 0)) {
+                            addIdea()
+                          }
+                        }
+                      }}
                       className="min-h-32"
                       disabled={!session.isTimerRunning && session.timer === 0}
                     />
@@ -1053,7 +1147,7 @@ export default function PreWritingIdeation({
                 </CardContent>
               </Card>
 
-              {/* Ideas Grid */}
+              {/* Ideas Grid - all ideas in same list, discarded greyed out */}
               {(activeIdeas.length > 0 || discardedIdeas.length > 0) && (
                 <Card>
                   <CardHeader>
@@ -1061,10 +1155,16 @@ export default function PreWritingIdeation({
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {activeIdeas.map((idea) => (
+                      {[...activeIdeas, ...discardedIdeas].map((idea) => {
+                        const isDiscarded = idea.status === "discarded"
+                        return (
                         <div
                           key={idea.id}
-                          className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                          className={`border rounded-lg p-4 transition-colors ${
+                            isDiscarded
+                              ? "border-gray-300 bg-gray-50 opacity-75"
+                              : "border-gray-200 hover:bg-gray-50"
+                          }`}
                         >
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex items-center space-x-2">
@@ -1076,26 +1176,43 @@ export default function PreWritingIdeation({
                               </span>
                             </div>
                             <div className="flex items-center space-x-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => selectIdea(idea.id)}
-                                className="h-8 w-8 p-0"
-                              >
-                                <Heart className="h-4 w-4 text-gray-400 hover:text-red-500" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => discardIdea(idea.id)}
-                                className="h-8 w-8 p-0"
-                              >
-                                <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-600" />
-                              </Button>
+                              {isDiscarded ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => restoreFromMisfits(idea.id)}
+                                  className="h-7 text-xs text-green-600 hover:bg-green-50"
+                                >
+                                  <RotateCcw className="h-3 w-3 mr-1" />
+                                  Restore Idea
+                                </Button>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => selectIdea(idea.id)}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Heart className="h-4 w-4 text-gray-400 hover:text-red-500" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => discardIdea(idea.id)}
+                                    className="h-8 w-8 p-0"
+                                    title="Send to Island of Misfit Ideas"
+                                  >
+                                    <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-600" />
+                                  </Button>
+                                </>
+                              )}
                             </div>
                           </div>
-                          <p className="text-sm text-gray-800 mb-2">{idea.content}</p>
-                          {idea.notes && <p className="text-xs text-gray-600 italic">"{idea.notes}"</p>}
+                          <p className={`text-sm mb-2 ${isDiscarded ? "text-gray-600 line-through" : "text-gray-800"}`}>{idea.content}</p>
+                          {idea.notes && (
+                            <p className={`text-xs italic ${isDiscarded ? "text-gray-500 line-through" : "text-gray-600"}`}>"{idea.notes}"</p>
+                          )}
                           {idea.attachedFiles && idea.attachedFiles.length > 0 && (
                             <div className="mt-2 pt-2 border-t border-gray-200">
                               <p className="text-xs text-gray-600 font-medium">Attachments:</p>
@@ -1109,45 +1226,8 @@ export default function PreWritingIdeation({
                             </div>
                           )}
                         </div>
-                      ))}
-                      
-                      {/* Show discarded ideas at the bottom, greyed out */}
-                      {discardedIdeas.length > 0 && (
-                        <div className="mt-6 pt-6 border-t-2 border-gray-300">
-                          <h3 className="text-xs font-medium text-gray-500 mb-3 flex items-center">
-                            <Archive className="h-3 w-3 mr-2" />
-                            Discarded Ideas ({discardedIdeas.length})
-                          </h3>
-                          {discardedIdeas.map((idea) => (
-                            <div
-                              key={idea.id}
-                              className="border border-gray-300 rounded-lg p-4 bg-gray-50 opacity-60 hover:opacity-80 transition-opacity mb-3"
-                            >
-                              <div className="flex items-start justify-between mb-2">
-                                <div className="flex items-center space-x-2">
-                                  <Archive className="h-3 w-3 text-gray-400" />
-                                  <span className="text-xs text-gray-500">
-                                    {new Date(idea.timestamp).toLocaleTimeString()}
-                                  </span>
-                                </div>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => restoreFromMisfits(idea.id)}
-                                  className="h-7 text-xs"
-                                >
-                                  <RotateCcw className="h-3 w-3 mr-1" />
-                                  Undo
-                                </Button>
-                              </div>
-                              <p className="text-sm text-gray-600 line-through mb-1">{idea.content}</p>
-                              {idea.notes && (
-                                <p className="text-xs text-gray-500 italic line-through">"{idea.notes}"</p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -1182,10 +1262,14 @@ export default function PreWritingIdeation({
               <Badge variant="outline">{(session.ideas ?? []).length} total ideas</Badge>
             </div>
             <div className="flex items-center space-x-2">
+              <Button onClick={exitToDashboard} variant="outline" size="sm">
+                <Home className="h-4 w-4 mr-2" />
+                Exit to Dashboard
+              </Button>
               <Button onClick={() => navigateToView("ideate", session.id)} variant="outline" size="sm">
                 Continue Ideating
               </Button>
-              <Button onClick={() => setSession(null)} variant="outline" size="sm">
+              <Button onClick={() => { setSession(null); navigateToView("setup"); }} variant="outline" size="sm">
                 New Session
               </Button>
             </div>
@@ -1298,9 +1382,9 @@ export default function PreWritingIdeation({
                             <p className="text-xs text-gray-400">{new Date(idea.timestamp).toLocaleString()}</p>
                           </div>
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => restoreFromMisfits(idea.id)}>
+                        <Button size="sm" variant="outline" onClick={() => restoreFromMisfits(idea.id)} className="text-green-600 hover:bg-green-50">
                           <RotateCcw className="h-4 w-4 mr-2" />
-                          Undo
+                          Restore Idea
                         </Button>
                       </div>
                       <p className="text-gray-600 line-through mb-2">{idea.content}</p>
@@ -1358,13 +1442,19 @@ export default function PreWritingIdeation({
                 Comparative Judgment
               </Badge>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigateToView("ideate", session.id)}
-            >
-              Back to Ideating
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Button onClick={exitToDashboard} variant="outline" size="sm">
+                <Home className="h-4 w-4 mr-2" />
+                Exit to Dashboard
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigateToView("ideate", session.id)}
+              >
+                Back to Ideating
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1407,9 +1497,9 @@ export default function PreWritingIdeation({
               </Badge>
             </div>
             <div className="flex items-center space-x-2">
-              <Button onClick={() => navigateToView("dashboard")} variant="outline" size="sm">
+              <Button onClick={exitToDashboard} variant="outline" size="sm">
                 <Home className="h-4 w-4 mr-2" />
-                Dashboard
+                Exit to Dashboard
               </Button>
               <Button
                 onClick={() => {
@@ -1439,17 +1529,21 @@ export default function PreWritingIdeation({
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {rankedIdeas.map((idea, idx) => (
+                {rankedIdeas.map((idea, idx) => {
+                  const isDiscarded = idea.status === "discarded"
+                  return (
                   <Card
                     key={idea.id}
                     className={`${
-                      idx === 0
-                        ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400"
-                        : idx === 1
-                          ? "bg-orange-50 border-orange-200"
-                          : idx === 2
-                            ? "bg-yellow-50 border-yellow-200"
-                            : "bg-white"
+                      isDiscarded
+                        ? "bg-gray-50 border-gray-300 opacity-75"
+                        : idx === 0
+                          ? "bg-amber-50 border-amber-300 ring-2 ring-amber-400"
+                          : idx === 1
+                            ? "bg-orange-50 border-orange-200"
+                            : idx === 2
+                              ? "bg-yellow-50 border-yellow-200"
+                              : "bg-white"
                     }`}
                   >
                     <CardContent className="p-6">
@@ -1458,18 +1552,20 @@ export default function PreWritingIdeation({
                           <Badge
                             variant="outline"
                             className={`text-lg font-bold ${
-                              idx === 0
-                                ? "bg-amber-500 text-white border-amber-600"
-                                : idx === 1
-                                  ? "bg-orange-400 text-white border-orange-500"
-                                  : idx === 2
-                                    ? "bg-yellow-400 text-white border-yellow-500"
-                                    : "bg-gray-200 text-gray-700"
+                              isDiscarded
+                                ? "bg-gray-300 text-gray-600"
+                                : idx === 0
+                                  ? "bg-amber-500 text-white border-amber-600"
+                                  : idx === 1
+                                    ? "bg-orange-400 text-white border-orange-500"
+                                    : idx === 2
+                                      ? "bg-yellow-400 text-white border-yellow-500"
+                                      : "bg-gray-200 text-gray-700"
                             }`}
                           >
                             #{idx + 1}
                           </Badge>
-                          {idx < 3 && (
+                          {idx < 3 && !isDiscarded && (
                             <Award
                               className={`h-5 w-5 ${
                                 idx === 0 ? "text-amber-500" : idx === 1 ? "text-orange-400" : "text-yellow-500"
@@ -1478,17 +1574,26 @@ export default function PreWritingIdeation({
                           )}
                         </div>
                         <Button
-                          onClick={() => sendToMisfits(idea)}
+                          onClick={() => isDiscarded ? restoreFromMisfits(idea.id) : sendToMisfits(idea)}
                           variant="outline"
                           size="sm"
-                          className="text-purple-600 hover:bg-purple-50"
+                          className={isDiscarded ? "text-green-600 hover:bg-green-50" : "text-purple-600 hover:bg-purple-50"}
                         >
-                          <Sparkles className="h-4 w-4 mr-2" />
-                          Send to Island of Misfits
+                          {isDiscarded ? (
+                            <>
+                              <RotateCcw className="h-4 w-4 mr-2" />
+                              Restore Idea
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4 mr-2" />
+                              Send to Island of Misfit Ideas
+                            </>
+                          )}
                         </Button>
                       </div>
 
-                      <p className="text-lg font-medium text-gray-800 mb-2">{idea.content}</p>
+                      <p className={`text-lg font-medium mb-2 ${isDiscarded ? "text-gray-500 line-through" : "text-gray-800"}`}>{idea.content}</p>
                       {idea.notes && <p className="text-sm text-gray-600 italic mb-3">"{idea.notes}"</p>}
 
                       <div className="flex items-center space-x-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
@@ -1550,7 +1655,8 @@ export default function PreWritingIdeation({
                       )}
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

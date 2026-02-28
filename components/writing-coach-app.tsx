@@ -103,7 +103,6 @@ export default function WritingCoachApp({
   const [projectDescription, setProjectDescription] = useState("")
   const [projectName, setProjectName] = useState("")
   const [isGeneratingTasks, setIsGeneratingTasks] = useState(false)
-  const [isReformulatingTasks, setIsReformulatingTasks] = useState(false)
   const [currentState, setCurrentState] = useState<
     "dashboard" | "setup" | "working" | "evaluating" | "completed"
   >("dashboard")
@@ -129,17 +128,24 @@ export default function WritingCoachApp({
   })
 
   const [isChunking, setIsChunking] = useState(false)
-
+  const [feedbackPointsChecked, setFeedbackPointsChecked] = useState<boolean[]>([])
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
+
+  // Sync feedback checklist when task changes
+  useEffect(() => {
+    const task = currentProject?.tasks[currentProject?.currentTaskIndex ?? 0]
+    const points = task?.actionablePoints ?? []
+    setFeedbackPointsChecked(points.map(() => false))
+  }, [currentProject?.id, currentProject?.currentTaskIndex])
 
   // Load projects from Supabase when user is available
   useEffect(() => {
     if (user?.id) {
       loadProjectsFromSupabase(user.id)
     } else {
-      setProjects([])
-      setCurrentProject(null)
+        setProjects([])
+        setCurrentProject(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
@@ -436,126 +442,6 @@ export default function WritingCoachApp({
           examples: [],
         }
     }
-  }
-
-  const reformulateTasks = async (project: Project, newCoachMode: CoachMode) => {
-    setIsReformulatingTasks(true)
-    const taskPersonality = getCoachPersonality(newCoachMode)
-
-    try {
-      const prompt = `You are ${taskPersonality.name}, a writing coach. Reformulate these existing writing tasks to match your ${taskPersonality.taskStyle} personality while keeping the same core objectives and structure.
-
-PERSONALITY GUIDELINES:
-${
-  newCoachMode === "baymax"
-    ? `
-- Use gentle, medical/diagnostic language
-- Be supportive but analytical
-- Include healthcare robot terminology
-- Show care for the user's "writing health"
-- Use phrases like "I detect," "diagnostic," "protocol," "optimal"
-`
-    : newCoachMode === "edna"
-      ? `
-- Be direct and no-nonsense
-- Show impatience with perfectionism
-- Use fashion designer confidence
-- Include phrases like "darling," "sweetie" (but not condescending)
-- Be brutally honest but motivating
-- Zero tolerance for self-doubt
-`
-      : `
-- Be encouraging and professional
-- Provide clear, actionable guidance
-- Focus on progress over perfection
-`
-}
-
-IMPORTANT: You must respond with ONLY a valid JSON array. Keep the same task IDs, focus areas, and suggested durations.
-
-Original tasks to reformulate:
-${JSON.stringify(
-  project.tasks.map((task) => ({
-    id: task.id,
-    title: task.title,
-    description: task.description,
-    focus: task.focus,
-    suggestedDuration: task.suggestedDuration,
-  })),
-)}
-
-Return the same structure but with titles and descriptions rewritten in ${taskPersonality.name}'s voice:
-[
-  {
-    "id": "existing_task_id",
-    "title": "Reformulated title in ${taskPersonality.name}'s voice",
-    "description": "Reformulated description in ${taskPersonality.name}'s ${taskPersonality.taskStyle} style",
-    "focus": "same_focus",
-    "suggestedDuration": same_duration
-  }
-]`
-
-      const response = await fetch("/api/reformulate-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      })
-
-      if (!response.ok) {
-        let errorMessage = "Failed to reformulate tasks"
-        try {
-          const data = await response.json()
-          if (data?.error && typeof data.error === "string") {
-            errorMessage = data.error
-          }
-        } catch {
-          // ignore JSON parse failures; keep generic message
-        }
-
-        throw new Error(errorMessage)
-      }
-
-      const { text } = await response.json()
-
-      let cleanedText = text.trim()
-      cleanedText = cleanedText.replace(/```json\n?|\n?```/g, "")
-      cleanedText = cleanedText.replace(/```\n?|\n?```/g, "")
-
-      const jsonMatch = cleanedText.match(/\[[\s\S]*\]/)
-      if (jsonMatch) {
-        cleanedText = jsonMatch[0]
-      }
-
-      const reformulatedTasks = JSON.parse(cleanedText)
-
-      if (Array.isArray(reformulatedTasks)) {
-        const updatedProject = { ...project, coachMode: newCoachMode }
-
-        // Update tasks with reformulated content while preserving user data
-        updatedProject.tasks = updatedProject.tasks.map((task) => {
-          const reformulated = reformulatedTasks.find((rt) => rt.id === task.id)
-          if (reformulated) {
-            return {
-              ...task,
-              title: reformulated.title,
-              description: reformulated.description,
-            }
-          }
-          return task
-        })
-
-        setCurrentProject(updatedProject)
-        setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-      }
-    } catch (error) {
-      console.error("Failed to reformulate tasks:", error)
-      // Still update the coach mode even if reformulation fails
-      const updatedProject = { ...project, coachMode: newCoachMode }
-      setCurrentProject(updatedProject)
-      setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-    }
-
-    setIsReformulatingTasks(false)
   }
 
   const generateTasks = async () => {
@@ -1014,6 +900,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     if (!currentProject) return
 
     const updatedProject = { ...currentProject }
+    const task = updatedProject.tasks[currentProject.currentTaskIndex]
     updatedProject.tasks[currentProject.currentTaskIndex].needsImprovement = false
 
     setCurrentProject(updatedProject)
@@ -1022,6 +909,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     setShowNextButton(false)
     setShowRedoButton(false)
     setShowCreateTaskButton(false)
+    setFeedbackPointsChecked((task.actionablePoints ?? []).map(() => false))
     startCurrentTask(updatedProject)
   }
 
@@ -1088,6 +976,9 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     const currentTask = project.tasks[project.currentTaskIndex]
     if (currentTask) {
       setCustomDuration([currentTask.suggestedDuration])
+      setFeedbackPointsChecked(
+        (currentTask.actionablePoints ?? []).map(() => false)
+      )
       startCurrentTask(project)
     }
   }
@@ -1275,8 +1166,8 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
             <div className="flex items-center space-x-4">
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/">
-                  <Home className="h-4 w-4 mr-2" />
-                  Tool Select
+                <Home className="h-4 w-4 mr-2" />
+                Tool Select
                 </Link>
               </Button>
               <Home className="h-6 w-6 text-blue-600" />
@@ -1284,20 +1175,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
               <span className="text-sm text-gray-600">Welcome, {user?.user_metadata?.name || user?.email}!</span>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <User className="h-4 w-4 text-gray-600" />
-                <span className="text-sm text-gray-600">Coach Mode:</span>
-                <Select value={coachMode} onValueChange={(value: CoachMode) => setCoachMode(value)}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">Normal</SelectItem>
-                    <SelectItem value="baymax">Baymax</SelectItem>
-                    <SelectItem value="edna">Edna</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <Button onClick={() => setCurrentState("setup")}>
                 <Plus className="h-4 w-4 mr-2" />
                 New Project
@@ -1687,6 +1564,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
   // Working View
   const currentTask = currentProject?.tasks[currentProject?.currentTaskIndex || 0]
   const isDraftTask = currentTask?.focus === "draft"
+  const showFeedbackPanel = currentTask?.feedback && (currentTask?.actionablePoints?.length ?? 0) > 0
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1715,26 +1593,13 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Coach:</span>
-              <Select
-                value={currentProject?.coachMode || "normal"}
-                onValueChange={async (value: CoachMode) => {
-                  if (currentProject && value !== currentProject.coachMode) {
-                    setCoachMode(value)
-                    await reformulateTasks(currentProject, value)
-                  }
-                }}
-                disabled={isReformulatingTasks}
-              >
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="normal">Normal</SelectItem>
-                  <SelectItem value="baymax">Baymax</SelectItem>
-                  <SelectItem value="edna">Edna</SelectItem>
-                </SelectContent>
-              </Select>
-              {isReformulatingTasks && <div className="text-xs text-gray-500">Reformulating...</div>}
+              <Badge variant="outline" className="text-xs">
+                {currentProject?.coachMode === "baymax"
+                  ? "🤖 Baymax"
+                  : currentProject?.coachMode === "edna"
+                    ? "👗 Edna"
+                    : "📝 Normal"}
+              </Badge>
             </div>
             {isDraftTask && (
               <div className="flex items-center space-x-2">
@@ -1751,7 +1616,46 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto p-4">
+      <div className={`p-4 ${showFeedbackPanel ? "max-w-[1600px] mx-auto" : "max-w-4xl mx-auto"}`}>
+        <div className={showFeedbackPanel ? "grid grid-cols-[320px_1fr] gap-6" : ""}>
+          {showFeedbackPanel && (
+            <aside className="sticky top-4 h-fit">
+              <Card className="border-amber-200 bg-amber-50/50">
+                <CardHeader>
+                  <CardTitle className="text-base">Coach Feedback</CardTitle>
+                  <p className="text-sm text-amber-900 whitespace-pre-wrap">{currentTask?.feedback}</p>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm font-medium text-gray-700 mb-3">To implement:</p>
+                  <div className="space-y-2">
+                    {(currentTask?.actionablePoints ?? []).map((point, idx) => (
+                      <label
+                        key={idx}
+                        className={`flex items-start gap-2 text-sm cursor-pointer group ${
+                          feedbackPointsChecked[idx] ? "text-gray-500 line-through" : "text-gray-800"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={feedbackPointsChecked[idx] ?? false}
+                          onChange={() =>
+                            setFeedbackPointsChecked((prev) => {
+                              const next = [...(prev.length ? prev : (currentTask?.actionablePoints ?? []).map(() => false))]
+                              next[idx] = !next[idx]
+                              return next
+                            })
+                          }
+                          className="mt-1 rounded border-gray-300"
+                        />
+                        <span>{point}</span>
+                      </label>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </aside>
+          )}
+          <div className="min-w-0">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="current" className="flex items-center space-x-2">
@@ -2137,6 +2041,8 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
             </Card>
           </TabsContent>
         </Tabs>
+          </div>
+        </div>
       </div>
     </div>
   )

@@ -45,7 +45,7 @@ html {
 }
         `}</style>
       </head>
-      <body className="min-h-screen antialiased">
+      <body>
         <ErrorBoundary>
           <AuthProvider>
             {children}
