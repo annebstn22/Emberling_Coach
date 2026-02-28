@@ -12,7 +12,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -42,6 +41,7 @@ import {
 } from "lucide-react"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import SharedNav from "@/components/shared-nav"
 import { supabase } from "@/lib/supabase"
 import type { User } from "@supabase/supabase-js"
@@ -105,16 +105,17 @@ export default function WritingCoachApp({
   onLogout: () => void
   initialProjectId?: string
 }) {
+  const router = useRouter()
   const [projects, setProjects] = useState<Project[]>([])
   const [currentProject, setCurrentProject] = useState<Project | null>(null)
   const [projectDescription, setProjectDescription] = useState("")
   const [projectName, setProjectName] = useState("")
   const [isGeneratingTasks, setIsGeneratingTasks] = useState(false)
   // If initialProjectId is provided, start in "working" state (will be set when project loads)
-  // Otherwise start in "dashboard" state
+  // Otherwise start in "setup" state (project creation form)
   const [currentState, setCurrentState] = useState<
     "dashboard" | "setup" | "working" | "evaluating" | "completed"
-  >(initialProjectId ? "working" : "dashboard")
+  >(initialProjectId ? "working" : "setup")
   const [timeRemaining, setTimeRemaining] = useState(0)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [taskInput, setTaskInput] = useState("")
@@ -1625,27 +1626,49 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
   // Setup View
   if (currentState === "setup") {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl">
-          <CardHeader className="text-center">
-            <CardTitle className="text-3xl font-light text-gray-800">Create New Project</CardTitle>
-            <p className="text-gray-600 mt-2">Break your writing into manageable, guided tasks</p>
-          </CardHeader>
-          <CardContent className="space-y-6">
+      <div className="min-h-screen bg-[#f7f4ee]">
+        <SharedNav activeTool="coach" onLogout={onLogout} />
+        <div className="max-w-[560px] mx-auto px-6 py-12">
+          <h2
+            className="text-[2.2rem] font-light text-[#1a1814] mb-1"
+            style={{ fontFamily: "'Cormorant Garamond', serif" }}
+          >
+            <em>Set up your project</em>
+          </h2>
+          <p
+            className="text-[0.68rem] text-[#9a948a] uppercase tracking-[0.12em] mb-10"
+            style={{ fontFamily: "'Inconsolata', monospace" }}
+          >
+            tell the coach what you&apos;re working on
+          </p>
+
+          <div className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Project Name</label>
-              <Input
+              <div
+                className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
+              >
+                Project title
+              </div>
+              <input
                 type="text"
-                placeholder="e.g., Blog Post About Sustainable Living"
+                placeholder="e.g. Grad school personal statement"
                 value={projectName}
                 onChange={(e) => setProjectName(e.target.value)}
+                className="w-full bg-white border border-[#e0dbd0] rounded-lg px-4 py-3 text-[0.9rem] text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4] placeholder:text-[#9a948a]"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Choose Your Coach</label>
+              <div
+                className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
+              >
+                Choose your coach
+              </div>
               <Select value={coachMode} onValueChange={(value: CoachMode) => setCoachMode(value)}>
-                <SelectTrigger>
+                <SelectTrigger className="bg-white border-[#e0dbd0] text-[#1a1814] focus:border-[#c8c2b4]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1654,7 +1677,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       <span>📝</span>
                       <div>
                         <div className="font-medium">Normal Coach</div>
-                        <div className="text-xs text-gray-500">Encouraging and professional</div>
+                        <div className="text-xs text-[#9a948a]">Encouraging and professional</div>
                       </div>
                     </div>
                   </SelectItem>
@@ -1663,7 +1686,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       <span>🤖</span>
                       <div>
                         <div className="font-medium">Baymax</div>
-                        <div className="text-xs text-gray-500">Gentle, healthcare robot</div>
+                        <div className="text-xs text-[#9a948a]">Gentle, healthcare robot</div>
                       </div>
                     </div>
                   </SelectItem>
@@ -1672,7 +1695,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       <span>👗</span>
                       <div>
                         <div className="font-medium">Edna Mode</div>
-                        <div className="text-xs text-gray-500">Direct, no-nonsense fashion designer</div>
+                        <div className="text-xs text-[#9a948a]">Direct, no-nonsense fashion designer</div>
                       </div>
                     </div>
                   </SelectItem>
@@ -1681,30 +1704,39 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Describe your writing project</label>
-              <Textarea
-                placeholder="e.g., Write a 1500-word blog post about sustainable living practices for beginners..."
+              <div
+                className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
+              >
+                Paste your prompt or assignment
+              </div>
+              <textarea
+                placeholder="Paste the writing prompt, assignment brief, or describe what you need to write…"
                 value={projectDescription}
                 onChange={(e) => setProjectDescription(e.target.value)}
-                className="min-h-32"
+                className="w-full bg-white border border-[#e0dbd0] rounded-lg px-4 py-3 text-[0.9rem] text-[#1a1814] outline-none transition-colors focus:border-[#c8c2b4] placeholder:text-[#9a948a] resize-none min-h-[100px]"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
               />
             </div>
 
-            <div className="flex space-x-3">
-              <Button onClick={goToDashboard} variant="outline" className="flex-1 bg-transparent">
-                Back to Dashboard
-              </Button>
-              <Button
-                onClick={generateTasks}
-                disabled={!projectDescription.trim() || !projectName.trim() || isGeneratingTasks}
-                className="flex-1"
-                size="lg"
-              >
-                {isGeneratingTasks ? "Creating Your Tasks..." : "Start Writing Journey"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            <button
+              onClick={generateTasks}
+              disabled={!projectDescription.trim() || !projectName.trim() || isGeneratingTasks}
+              className="w-full bg-[#1a1814] text-[#f7f4ee] border-none rounded-lg py-4 text-[1.15rem] cursor-pointer transition-all hover:opacity-[0.88] hover:-translate-y-[1px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+              style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic" }}
+            >
+              {isGeneratingTasks ? "Creating your tasks…" : "Build my writing plan →"}
+            </button>
+
+            <button
+              onClick={() => router.push("/dashboard")}
+              className="w-full bg-transparent border border-[#e0dbd0] rounded-lg py-3 text-[0.72rem] text-[#9a948a] cursor-pointer transition-all hover:border-[#c8c2b4] hover:text-[#1a1814]"
+              style={{ fontFamily: "'Inconsolata', monospace" }}
+            >
+              ← Back to My Projects
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
@@ -1981,10 +2013,74 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
         </div>
       </div>
 
-      <div className={`p-4 ${showFeedbackPanel ? "max-w-[1600px] mx-auto" : "max-w-4xl mx-auto"}`}>
-        <div className={showFeedbackPanel ? "grid grid-cols-[320px_1fr] gap-6" : ""}>
-          {showFeedbackPanel && (
-            <aside className="sticky top-4 h-fit">
+      {/* Main Layout: Side Panel + Work Area */}
+      <div className="grid grid-cols-[270px_1fr] min-h-[calc(100vh-105px)]">
+        {/* Side Panel */}
+        <aside className="border-r border-[#e0dbd0] bg-white p-5 overflow-y-auto">
+          <div className="space-y-5">
+            {/* Project Info */}
+            <div>
+              <div className="text-[0.6rem] uppercase tracking-[0.1em] text-[#9a948a] mb-1">Current project</div>
+              <div className="font-serif text-[1.05rem] text-[#1a1814] leading-tight">{currentProject?.name}</div>
+            </div>
+
+            {/* Progress Bar */}
+            <div>
+              <div className="bg-[#e0dbd0] rounded h-1 overflow-hidden">
+                <div
+                  className="h-full bg-[#1a5c32] rounded transition-all duration-400"
+                  style={{ width: `${getProgressPercentage(currentProject!)}%` }}
+                />
+              </div>
+              <div className="text-[0.62rem] text-[#9a948a] mt-1.5">
+                {currentProject?.tasks.filter((t) => t.completed).length} of {currentProject?.tasks.length} tasks done
+              </div>
+            </div>
+
+            {/* Task List */}
+            <div>
+              <div className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2">Tasks</div>
+              <div className="flex flex-col gap-1">
+                {currentProject?.tasks.map((task, index) => (
+                  <div
+                    key={task.id}
+                    onClick={() => handleTaskClick(index)}
+                    className={`flex items-start gap-2.5 px-2.5 py-2 rounded-[7px] cursor-pointer transition-colors border ${
+                      task.completed
+                        ? "opacity-50 border-transparent"
+                        : index === (currentProject?.currentTaskIndex ?? 0)
+                          ? "bg-[#f7f4ee] border-[#e0dbd0]"
+                          : "border-transparent hover:bg-[#f7f4ee]"
+                    }`}
+                  >
+                    <div
+                      className={`w-[15px] h-[15px] border-[1.5px] rounded flex-shrink-0 mt-0.5 flex items-center justify-center text-[0.52rem] transition-all ${
+                        task.completed
+                          ? "bg-[#1a5c32] border-[#1a5c32] text-white"
+                          : "border-[#c8c2b4]"
+                      }`}
+                    >
+                      {task.completed ? "✓" : ""}
+                    </div>
+                    <span
+                      className={`text-[0.75rem] leading-[1.35] ${
+                        task.completed ? "line-through text-[#9a948a]" : "text-[#4a4640]"
+                      }`}
+                    >
+                      {task.title}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* Work Area */}
+        <div className="p-6 overflow-y-auto max-h-[calc(100vh-105px)]">
+          <div className="max-w-3xl mx-auto space-y-6">
+            {/* Coach Feedback Panel */}
+            {showFeedbackPanel && (
               <Card className="border-amber-200 bg-amber-50/50">
                 <CardHeader>
                   <CardTitle className="text-base">Coach Feedback</CardTitle>
@@ -2018,26 +2114,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                   </div>
                 </CardContent>
               </Card>
-            </aside>
-          )}
-          <div className="min-w-0">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="current" className="flex items-center space-x-2">
-              <Target className="h-4 w-4" />
-              <span>Current Task</span>
-            </TabsTrigger>
-            <TabsTrigger value="progress" className="flex items-center space-x-2">
-              <FileText className="h-4 w-4" />
-              <span>Progress Overview</span>
-            </TabsTrigger>
-            <TabsTrigger value="draft" className="flex items-center space-x-2">
-              <Edit3 className="h-4 w-4" />
-              <span>Full Draft</span>
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="current" className="space-y-6">
+            )}
             {/* Progress */}
             <Card>
               <CardContent className="py-4">
@@ -2567,90 +2644,8 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
 
-          <TabsContent value="progress" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <FileText className="h-5 w-5" />
-                  <span>Writing Progress</span>
-                </CardTitle>
-                <p className="text-gray-600">Track your completed tasks and overall progress</p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4">
-                  {currentProject?.tasks.map((task, index) => (
-                    <div
-                      key={task.id}
-                      onClick={() => handleTaskClick(index)}
-                      className={`border rounded-lg p-4 transition-all cursor-pointer hover:shadow-md ${
-                        task.completed
-                          ? "bg-green-50 border-green-200 hover:bg-green-100"
-                          : task.needsImprovement
-                            ? "bg-amber-50 border-amber-200 hover:bg-amber-100"
-                            : index === currentProject.currentTaskIndex
-                              ? "bg-blue-50 border-blue-200 hover:bg-blue-100"
-                              : "bg-gray-50 border-gray-200 hover:bg-gray-100"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          {task.completed ? (
-                            <CheckCircle className="h-5 w-5 text-green-600" />
-                          ) : task.needsImprovement ? (
-                            <AlertCircle className="h-5 w-5 text-amber-600" />
-                          ) : index === currentProject.currentTaskIndex ? (
-                            <Clock className="h-5 w-5 text-blue-600" />
-                          ) : (
-                            <div className="h-5 w-5 rounded-full border-2 border-gray-300" />
-                          )}
-                          <h3 className="font-medium text-gray-800">{task.title}</h3>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Badge className={`text-xs ${getFocusColor(task.focus)}`}>{task.focus}</Badge>
-                          <span className="text-xs text-gray-500">{task.duration}min</span>
-                          {task.attempts && task.attempts > 1 && (
-                            <Badge variant="outline" className="text-xs">
-                              {task.attempts} attempts
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-
-                      {task.feedback && (
-                        <div
-                          className={`mt-3 p-3 bg-white rounded border ${
-                            task.needsImprovement ? "border-amber-200" : "border-green-200"
-                          }`}
-                        >
-                          <p className={`text-sm mb-2 ${task.needsImprovement ? "text-amber-800" : "text-green-800"}`}>
-                            <strong>Coach Feedback:</strong> {task.feedback}
-                          </p>
-                          {task.completedAt && (
-                            <p className="text-xs text-gray-500">Completed: {task.completedAt.toLocaleString()}</p>
-                          )}
-                        </div>
-                      )}
-
-                      {task.userWork && (
-                        <div className="mt-3 p-3 bg-white rounded border border-gray-200">
-                          <p className="text-sm text-gray-600 mb-1">
-                            <strong>Your Work:</strong>
-                          </p>
-                          <p className="text-sm text-gray-800 line-clamp-3">
-                            {task.userWork.length > 150 ? `${task.userWork.substring(0, 150)}...` : task.userWork}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="draft" className="space-y-6">
+            {/* Full Draft */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
@@ -2715,8 +2710,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
           </div>
         </div>
       </div>
