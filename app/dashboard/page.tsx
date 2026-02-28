@@ -51,7 +51,7 @@ function DashboardContent() {
         .from("ideation_sessions")
         .select("*, ideas(*)")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
 
       if (!ideationError && ideationData) {
         // Fetch project names for ideation sessions linked to coach projects
@@ -96,7 +96,7 @@ function DashboardContent() {
         .from("threader_projects")
         .select("*, threader_items(*)")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
 
       if (!threaderError && threaderData) {
         // Fetch project names for threads linked to coach projects
@@ -139,7 +139,7 @@ function DashboardContent() {
         .from("projects")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
 
       if (!coachError && coachData) {
         const formattedCoach: DashboardProject[] = coachData.map((p: any) => ({
@@ -314,11 +314,11 @@ function DashboardContent() {
           <div className="text-xs uppercase tracking-wider text-[#9a948a] mb-3 pb-2 border-b border-[#e0dbd0]">
             ✍️ Writing Projects
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
-            {filteredCoach.length === 0 ? (
-              <div className="font-serif italic text-sm text-[#9a948a] py-1">No projects yet.</div>
-            ) : (
-              visibleCoachItems.map((project) => (
+          {filteredCoach.length === 0 ? (
+            <div className="font-serif italic text-sm text-[#9a948a] py-1 mb-3">No projects yet.</div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3 mb-3">
+              {visibleCoachItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -338,23 +338,23 @@ function DashboardContent() {
                     <div className="text-xs text-[#9a948a] italic truncate">{project.preview}</div>
                   )}
                 </div>
-              ))
-            )}
-            <button
-              onClick={() => router.push("/writing-coach")}
-              className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
-            >
-              + New writing project
-            </button>
-          </div>
+              ))}
+            </div>
+          )}
           {!isSearching && filteredCoach.length > visibleCoach && (
             <button
               onClick={() => setVisibleCoach((v) => v + 9)}
-              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+              className="mb-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
             >
               Show {Math.min(9, filteredCoach.length - visibleCoach)} more →
             </button>
           )}
+          <button
+            onClick={() => router.push("/writing-coach")}
+            className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
+          >
+            + New writing project
+          </button>
         </div>
 
         {/* Ideation Sessions */}
@@ -362,11 +362,11 @@ function DashboardContent() {
           <div className="text-xs uppercase tracking-wider text-[#9a948a] mb-3 pb-2 border-b border-[#e0dbd0]">
             💡 Ideation Sessions
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
-            {filteredIdeation.length === 0 ? (
-              <div className="font-serif italic text-sm text-[#9a948a] py-1">No sessions yet.</div>
-            ) : (
-              visibleIdeationItems.map((project) => (
+          {filteredIdeation.length === 0 ? (
+            <div className="font-serif italic text-sm text-[#9a948a] py-1 mb-3">No sessions yet.</div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3 mb-3">
+              {visibleIdeationItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -389,23 +389,23 @@ function DashboardContent() {
                     <div className="text-[0.6rem] text-[#1a4a6e] mt-1">↳ from "{project.coachProject}"</div>
                   )}
                 </div>
-              ))
-            )}
-            <button
-              onClick={() => router.push("/pre-writing")}
-              className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
-            >
-              + New ideation session
-            </button>
-          </div>
+              ))}
+            </div>
+          )}
           {!isSearching && filteredIdeation.length > visibleIdeation && (
             <button
               onClick={() => setVisibleIdeation((v) => v + 9)}
-              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+              className="mb-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
             >
               Show {Math.min(9, filteredIdeation.length - visibleIdeation)} more →
             </button>
           )}
+          <button
+            onClick={() => router.push("/pre-writing")}
+            className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
+          >
+            + New ideation session
+          </button>
         </div>
 
         {/* Threader Projects */}
@@ -413,11 +413,11 @@ function DashboardContent() {
           <div className="text-xs uppercase tracking-wider text-[#9a948a] mb-3 pb-2 border-b border-[#e0dbd0]">
             🧵 Threads
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
-            {filteredThreader.length === 0 ? (
-              <div className="font-serif italic text-sm text-[#9a948a] py-1">No threads yet.</div>
-            ) : (
-              visibleThreaderItems.map((project) => (
+          {filteredThreader.length === 0 ? (
+            <div className="font-serif italic text-sm text-[#9a948a] py-1 mb-3">No threads yet.</div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3 mb-3">
+              {visibleThreaderItems.map((project) => (
                 <div
                   key={project.id}
                   onClick={(e) => handleProjectClick(project, e)}
@@ -440,23 +440,23 @@ function DashboardContent() {
                     <div className="text-[0.6rem] text-[#1a4a6e] mt-1">↳ from "{project.coachProject}"</div>
                   )}
                 </div>
-              ))
-            )}
-            <button
-              onClick={() => router.push("/threader")}
-              className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
-            >
-              + New thread
-            </button>
-          </div>
+              ))}
+            </div>
+          )}
           {!isSearching && filteredThreader.length > visibleThreader && (
             <button
               onClick={() => setVisibleThreader((v) => v + 9)}
-              className="mt-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
+              className="mb-3 text-[0.68rem] font-mono text-[#9a948a] hover:text-[#1a1814] bg-transparent border border-[#e0dbd0] hover:border-[#c8c2b4] rounded-md px-4 py-2 transition-all"
             >
               Show {Math.min(9, filteredThreader.length - visibleThreader)} more →
             </button>
           )}
+          <button
+            onClick={() => router.push("/threader")}
+            className="flex items-center gap-2 bg-transparent border border-dashed border-[#c8c2b4] rounded-lg p-4 cursor-pointer transition-all hover:border-[#e0dbd0] hover:text-[#1a1814] hover:bg-white font-mono text-xs text-[#9a948a]"
+          >
+            + New thread
+          </button>
         </div>
       </div>
 

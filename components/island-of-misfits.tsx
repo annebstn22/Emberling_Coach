@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 
 interface MisfitIdea {
   id: string
+  ideaId?: string // original idea row id — used to restore status in the ideas table
   content: string
   notes: string
   tags: string[]
@@ -39,6 +40,7 @@ export default function IslandOfMisfits({
         setMisfitIdeas(
           data.map((idea: any) => ({
             id: idea.id,
+            ideaId: idea.idea_id || undefined,
             content: idea.content,
             notes: idea.notes,
             tags: idea.tags || [],
@@ -66,6 +68,25 @@ export default function IslandOfMisfits({
       setMisfitIdeas((prev) => prev.filter((i) => i.id !== id))
     } catch (error) {
       console.error("Error removing misfit idea:", error)
+    }
+  }
+
+  // Rescue: delete from misfit_ideas AND flip the original idea back to "active"
+  const rescueMisfitIdea = async (misfit: MisfitIdea) => {
+    try {
+      // Remove from island
+      await supabase.from("misfit_ideas").delete().eq("id", misfit.id)
+      // Restore status on the original idea row (so session view shows it as active again)
+      if (misfit.ideaId) {
+        await supabase
+          .from("ideas")
+          .update({ status: "active" })
+          .eq("id", misfit.ideaId)
+      }
+      setMisfitIdeas((prev) => prev.filter((i) => i.id !== misfit.id))
+      onMisfitImport?.(misfit)
+    } catch (error) {
+      console.error("Error rescuing misfit idea:", error)
     }
   }
 
@@ -203,10 +224,7 @@ export default function IslandOfMisfits({
 
               {/* Rescue */}
               <button
-                onClick={() => {
-                  onMisfitImport?.(idea)
-                  removeMisfitIdea(idea.id)
-                }}
+                onClick={() => rescueMisfitIdea(idea)}
                 style={{
                   background: "none",
                   border: "1px solid var(--border)",
