@@ -13,7 +13,7 @@ interface SharedNavProps {
 
 export default function SharedNav({ activeTool = null, onLogout }: SharedNavProps) {
   const btnBase = "px-3 py-1.5 text-xs uppercase tracking-wider border rounded transition-all"
-  const btnInactive = `${btnBase} border-transparent text-[#9a948a] hover:border-[#e0dbd0]`
+  const btnInactive = `${btnBase} border-transparent text-[#6b6560] hover:border-[#c8c2b4] hover:text-[#1a1814]`
   const btnActive = `${btnBase} border-[#c8c2b4] text-[#1a1814] bg-[#f0ece2]`
 
   return (
@@ -46,8 +46,8 @@ export default function SharedNav({ activeTool = null, onLogout }: SharedNavProp
             <button 
               className={`${btnBase} ${activeTool === "island" ? "bg-[#fdf5f5]" : "bg-transparent"}`}
               style={{
-                borderColor: '#d4b4b4',
-                color: '#8b4040',
+                borderColor: '#c49a9a',
+                color: '#7a2f2f',
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = '#fdf5f5' }}
               onMouseLeave={(e) => { e.currentTarget.style.background = activeTool === "island" ? '#fdf5f5' : 'transparent' }}
@@ -56,7 +56,7 @@ export default function SharedNav({ activeTool = null, onLogout }: SharedNavProp
             </button>
           </Link>
           <Link href="/dashboard">
-            <button className={activeTool === "dashboard" ? btnActive : `${btnBase} border-[#e0dbd0] text-[#9a948a] hover:border-[#c8c2b4] hover:text-[#1a1814]`}>
+            <button className={activeTool === "dashboard" ? btnActive : `${btnBase} border-[#e0dbd0] text-[#6b6560] hover:border-[#c8c2b4] hover:text-[#1a1814]`}>
               ⊞ My Projects
             </button>
           </Link>
@@ -64,7 +64,7 @@ export default function SharedNav({ activeTool = null, onLogout }: SharedNavProp
             onClick={onLogout}
             variant="outline"
             size="sm"
-            className="border-[#e0dbd0] text-[#9a948a] hover:border-[#c8c2b4] hover:text-[#1a1814]"
+            className="border-[#e0dbd0] text-[#6b6560] hover:border-[#c8c2b4] hover:text-[#1a1814]"
           >
             <LogOut className="h-4 w-4 mr-2" />
             Logout
