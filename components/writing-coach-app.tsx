@@ -1329,7 +1329,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     }
 
     const updatedProject = { ...currentProject }
-    const currentTaskIndex = currentProject.currentTaskIndex
 
     updatedProject.tasks[currentTaskIndex].feedback = evaluation.feedback
     updatedProject.tasks[currentTaskIndex].actionablePoints = evaluation.actionablePoints
