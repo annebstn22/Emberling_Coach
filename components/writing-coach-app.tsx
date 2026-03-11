@@ -1212,8 +1212,11 @@ WORD COUNT:
 ${taskInput.trim().split(/\s+/).length} words
 
 EVALUATION RULES:
-- Judge against the Expectations above (not a higher bar)
-- If this is an early, low-expectation task and the writing is unusually polished/pristine, flag that as possible perfectionism and suggest a more iterative approach
+- Judge against the Expectations above — not a higher bar
+- Set needsImprovement: true ONLY if the user clearly hasn't addressed the core expectation (e.g. mostly blank, completely off-topic, or missed the stated goal entirely). A rough, imperfect attempt that covers the core content should PASS.
+- CASE A — Work is genuinely incomplete or off-target: give 3-5 concrete, specific actionable points that tell the user exactly what's missing and how to add it. These ARE instructions to improve the current work.
+- CASE B — Work meets or exceeds expectations but is unusually polished for an early low-expectation task (possible perfectionism): acknowledge the quality, name the pattern, but do NOT tell the user to go back and worsen the text. Instead frame all points as self-awareness observations for FUTURE tasks — things to watch for next time to keep momentum and loosen up earlier.
+- In both cases, keep points short, specific, and in ${evalPersonality.name}'s voice.
 
 Return EXACTLY this JSON structure (no markdown, no additional text):
 {
@@ -1878,43 +1881,55 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 {currentTask?.needsImprovement ? (
                   <AlertCircle className="h-16 w-16 text-amber-500 mx-auto mb-4" />
                 ) : (
-                  <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
+                  <Lightbulb className="h-16 w-16 text-blue-500 mx-auto mb-4" />
                 )}
                 <h2 className="text-xl font-medium text-gray-800 mb-4">
                   {currentTask?.needsImprovement
                     ? currentProject?.coachMode === "baymax"
-                      ? "Diagnostic Complete - Improvement Protocol Needed"
+                      ? "Improvement Protocol Required"
                       : currentProject?.coachMode === "edna"
-                        ? "We Can Do Better, Darling!"
-                        : "Let's Improve This!"
+                        ? "Not There Yet, Darling"
+                        : "Needs More Work"
                     : currentProject?.coachMode === "baymax"
-                      ? "Task Successfully Completed!"
+                      ? "Diagnostic Complete"
                       : currentProject?.coachMode === "edna"
-                        ? "Not Bad, Sweetie!"
-                        : "Task Complete!"}
+                        ? "Here's My Take, Darling"
+                        : "Coach Feedback"}
                 </h2>
                 {currentTask?.feedback && (
                   <div
                     className={`border rounded-lg p-4 mb-6 ${
-                      currentTask.needsImprovement ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"
+                      currentTask.needsImprovement
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-blue-50 border-blue-200"
                     }`}
                   >
-                    <p className={`mb-4 ${currentTask.needsImprovement ? "text-amber-800" : "text-green-800"}`}>
+                    <p className={`mb-4 ${currentTask.needsImprovement ? "text-amber-900" : "text-blue-900"}`}>
                       {currentTask.feedback}
                     </p>
                     {currentTask.actionablePoints && currentTask.actionablePoints.length > 0 && (
                       <div className="text-left">
                         <h4
-                          className={`font-medium mb-2 ${currentTask.needsImprovement ? "text-amber-800" : "text-green-800"}`}
+                          className={`font-medium mb-2 ${
+                            currentTask.needsImprovement ? "text-amber-900" : "text-blue-900"
+                          }`}
                         >
-                          {currentProject?.coachMode === "baymax"
-                            ? "Recommended Actions:"
-                            : currentProject?.coachMode === "edna"
-                              ? "Fix These Now:"
-                              : "Action Items:"}
+                          {currentTask.needsImprovement
+                            ? currentProject?.coachMode === "baymax"
+                              ? "Fix these now:"
+                              : currentProject?.coachMode === "edna"
+                                ? "Fix these now:"
+                                : "What to fix:"
+                            : currentProject?.coachMode === "baymax"
+                              ? "Notes for next time:"
+                              : currentProject?.coachMode === "edna"
+                                ? "Keep in mind:"
+                                : "For next time:"}
                         </h4>
                         <ul
-                          className={`space-y-1 text-sm ${currentTask.needsImprovement ? "text-amber-700" : "text-green-700"}`}
+                          className={`space-y-1 text-sm ${
+                            currentTask.needsImprovement ? "text-amber-800" : "text-blue-800"
+                          }`}
                         >
                           {currentTask.actionablePoints.map((point, index) => (
                             <li key={index} className="flex items-start">
