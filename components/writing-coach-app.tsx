@@ -1800,15 +1800,15 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
             tell the coach what you&apos;re working on
           </p>
 
-          <div className="bg-white border border-[#e0dbd0] rounded-lg px-5 py-4 mb-8">
+          <div className="bg-[#f0ece3] border border-[#d8d1c4] rounded-lg px-5 py-5 mb-8">
             <p
-              className="text-[0.75rem] text-[#4a4640] leading-relaxed mb-2"
-              style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic" }}
+              className="text-[1rem] text-[#1a1814] leading-relaxed mb-3"
+              style={{ fontFamily: "'Cormorant Garamond', serif" }}
             >
               &ldquo;{mistakeFact.quote}&rdquo;
             </p>
             <p
-              className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a]"
+              className="text-[0.65rem] uppercase tracking-[0.12em] text-[#9a948a]"
               style={{ fontFamily: "'Inconsolata', monospace" }}
             >
               — {mistakeFact.name}
