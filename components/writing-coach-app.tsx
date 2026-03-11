@@ -5,7 +5,7 @@ import type React from "react"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import {
   Play,
   Pause,
-  SkipForward,
+
   CheckCircle,
   Target,
   Lightbulb,
@@ -76,7 +76,6 @@ interface Project {
   description: string
   tasks: Task[]
   currentTaskIndex: number
-  skipsUsed: number
   completedWork: string[]
   createdAt: Date
   coachMode: CoachMode
@@ -96,6 +95,69 @@ interface TypingStats {
 //   name: string
 //   createdAt: Date
 // }
+
+const MISTAKE_FACTS = [
+  {
+    quote: "Hemingway rewrote the ending of A Farewell to Arms 47 times before he was satisfied.",
+    name: "Ernest Hemingway",
+  },
+  {
+    quote: "Pixar scrapped the entire Toy Story 2 script 8 months before release and rewrote it from scratch in 9 months.",
+    name: "Pixar Animation Studios",
+  },
+  {
+    quote: "Stephen King threw the first draft of Carrie in the trash. His wife retrieved it. The novel sold 1 million copies.",
+    name: "Stephen King",
+  },
+  {
+    quote: "J.K. Rowling was rejected by 12 publishers before Bloomsbury accepted Harry Potter and the Philosopher's Stone.",
+    name: "J.K. Rowling",
+  },
+  {
+    quote: "Thomas Edison made approximately 1,000 unsuccessful attempts before developing a working incandescent light bulb.",
+    name: "Thomas Edison",
+  },
+  {
+    quote: "Charles Darwin spent 20 years revising On the Origin of Species before publishing it, calling early notes 'grievously erroneous.'",
+    name: "Charles Darwin",
+  },
+  {
+    quote: "Maya Angelou rented a hotel room every morning to write in — leaving all her own books behind to stay unsentimental about her drafts.",
+    name: "Maya Angelou",
+  },
+  {
+    quote: "Beethoven filled over 400 pages of sketchbooks with rejected musical ideas for his Ninth Symphony alone.",
+    name: "Ludwig van Beethoven",
+  },
+  {
+    quote: "Leonardo da Vinci left approximately two-thirds of his projects unfinished. His notebooks contain over 13,000 pages of drafts and false starts.",
+    name: "Leonardo da Vinci",
+  },
+  {
+    quote: "The U.S. Declaration of Independence went through 86 editorial changes between Jefferson's original draft and the final adopted version.",
+    name: "Thomas Jefferson",
+  },
+  {
+    quote: "Samuel Beckett wrote Waiting for Godot in French — a language he was less fluent in — specifically to force himself to stop over-polishing.",
+    name: "Samuel Beckett",
+  },
+  {
+    quote: "García Márquez spent 18 months on One Hundred Years of Solitude, some days producing only a single sentence.",
+    name: "Gabriel García Márquez",
+  },
+  {
+    quote: "F. Scott Fitzgerald rewrote The Great Gatsby multiple times after his editor returned early drafts with hundreds of notes.",
+    name: "F. Scott Fitzgerald",
+  },
+  {
+    quote: "Agatha Christie wrote every first draft by hand on whatever paper was available — napkins, envelopes, scraps — calling the messiness 'half the fun.'",
+    name: "Agatha Christie",
+  },
+  {
+    quote: "Winston Churchill's speech drafts are filled with crossed-out lines and margin rewrites. The famous improvised quality was the result of extensive, messy iteration.",
+    name: "Winston Churchill",
+  },
+]
 
 export default function WritingCoachApp({
   user,
@@ -160,6 +222,12 @@ export default function WritingCoachApp({
   }>>([])
   const typingStartTime = useRef<number>(0)
   const lastInputLength = useRef<number>(0)
+  const [showChunkHint, setShowChunkHint] = useState(false)
+  const chunkHintShownRef = useRef(false)
+  const mistakeFact = useMemo(
+    () => MISTAKE_FACTS[Math.floor(Math.random() * MISTAKE_FACTS.length)],
+    []
+  )
 
   // Delete confirmation handlers
   const confirmDelete = async () => {
@@ -296,7 +364,6 @@ export default function WritingCoachApp({
           description: p.description,
           coachMode: p.coach_mode as CoachMode,
           currentTaskIndex: p.current_task_index,
-          skipsUsed: p.skips_used,
           completedWork: p.completed_work || [],
           createdAt: new Date(p.created_at),
           tasks: (p.tasks || []).map((t: any) => ({
@@ -615,7 +682,6 @@ export default function WritingCoachApp({
             description: project.description,
             coach_mode: project.coachMode,
             current_task_index: project.currentTaskIndex,
-            skips_used: project.skipsUsed,
             completed_work: project.completedWork,
             created_at: project.createdAt.toISOString(),
             updated_at: new Date().toISOString(),
@@ -1013,7 +1079,6 @@ Writing project: "${projectDescription}"`
             subtasks: [],
           })),
           currentTaskIndex: 0,
-          skipsUsed: 0,
           completedWork: [],
           createdAt: new Date(),
           coachMode: coachMode,
@@ -1070,7 +1135,6 @@ Writing project: "${projectDescription}"`
       description: projectDescription,
       tasks: fallbackTasks,
       currentTaskIndex: 0,
-      skipsUsed: 0,
       completedWork: [],
       createdAt: new Date(),
       coachMode: coachMode,
@@ -1094,6 +1158,13 @@ Writing project: "${projectDescription}"`
       setShowNextButton(false)
       setShowRedoButton(false)
       setShowCreateTaskButton(false)
+
+      // Show chunk hint once per project session
+      if (!chunkHintShownRef.current) {
+        chunkHintShownRef.current = true
+        setShowChunkHint(true)
+        setTimeout(() => setShowChunkHint(false), 15000)
+      }
 
       // Auto-enable backspace lock for draft tasks
       if (currentTask.focus === "draft" && !currentTask.userWork) {
@@ -1395,26 +1466,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     startCurrentTask(updatedProject)
   }
 
-  const skipTask = () => {
-    if (!currentProject || currentProject.skipsUsed >= 3) return
-
-    const updatedProject = { ...currentProject }
-    updatedProject.skipsUsed += 1
-    updatedProject.currentTaskIndex += 1
-
-    setCurrentProject(updatedProject)
-    setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-    setIsTimerRunning(false)
-
-    if (updatedProject.currentTaskIndex >= updatedProject.tasks.length) {
-      setCurrentState("completed")
-    } else {
-      const nextTask = updatedProject.tasks[updatedProject.currentTaskIndex]
-      setCustomDuration([nextTask.suggestedDuration])
-      startCurrentTask(updatedProject)
-    }
-  }
-
   const handleCompleteEarly = async () => {
     setIsTimerRunning(false)
     setTimeRemaining(0)
@@ -1705,7 +1756,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
 
                     <div className="flex items-center justify-between text-xs text-gray-500">
                       <span>Created {project.createdAt.toLocaleDateString()}</span>
-                      <span>{project.skipsUsed}/3 skips used</span>
                     </div>
 
                     <div className="flex items-center space-x-2">
@@ -1749,6 +1799,21 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
           >
             tell the coach what you&apos;re working on
           </p>
+
+          <div className="bg-white border border-[#e0dbd0] rounded-lg px-5 py-4 mb-8">
+            <p
+              className="text-[0.75rem] text-[#4a4640] leading-relaxed mb-2"
+              style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: "italic" }}
+            >
+              &ldquo;{mistakeFact.quote}&rdquo;
+            </p>
+            <p
+              className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a]"
+              style={{ fontFamily: "'Inconsolata', monospace" }}
+            >
+              — {mistakeFact.name}
+            </p>
+          </div>
 
           <div className="space-y-5">
             <div>
@@ -1855,35 +1920,41 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     const viewPersonality = getCoachPersonality(currentProject?.coachMode || "normal")
 
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-3xl text-center">
-          <CardContent className="py-12">
-            {isEvaluating ? (
-              <>
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <h2 className="text-xl font-medium text-gray-800">
+      <div className="min-h-screen bg-[#f7f4ee] flex items-center justify-center p-6">
+        <div className="w-full max-w-2xl bg-white border border-[#e0dbd0] rounded-xl px-8 py-10 text-center">
+          {isEvaluating ? (
+            <>
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#1a1814] mx-auto mb-6"></div>
+              <h2
+                className="text-[1.6rem] font-light text-[#1a1814] mb-2"
+                style={{ fontFamily: "'Cormorant Garamond', serif" }}
+              >
+                <em>
                   {currentProject?.coachMode === "baymax"
                     ? "Running diagnostic analysis..."
                     : currentProject?.coachMode === "edna"
                       ? "Edna is reviewing your work..."
-                      : "Evaluating your progress..."}
-                </h2>
-                <p className="text-gray-600 mt-2">
-                  {currentProject?.coachMode === "baymax"
-                    ? "Please wait while I analyze your writing health"
-                    : currentProject?.coachMode === "edna"
-                      ? "This better be good, darling..."
-                      : "Your writing coach is reviewing your work"}
-                </p>
-              </>
-            ) : (
-              <>
-                {currentTask?.needsImprovement ? (
-                  <AlertCircle className="h-16 w-16 text-amber-500 mx-auto mb-4" />
-                ) : (
-                  <Lightbulb className="h-16 w-16 text-blue-500 mx-auto mb-4" />
-                )}
-                <h2 className="text-xl font-medium text-gray-800 mb-4">
+                      : "Reviewing your work..."}
+                </em>
+              </h2>
+              <p
+                className="text-[0.68rem] uppercase tracking-[0.12em] text-[#9a948a]"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
+              >
+                {currentProject?.coachMode === "baymax"
+                  ? "Please wait while I analyze your writing health"
+                  : currentProject?.coachMode === "edna"
+                    ? "This better be good, darling..."
+                    : "Your writing coach is reviewing your work"}
+              </p>
+            </>
+          ) : (
+            <>
+              <h2
+                className="text-[1.8rem] font-light text-[#1a1814] mb-1"
+                style={{ fontFamily: "'Cormorant Garamond', serif" }}
+              >
+                <em>
                   {currentTask?.needsImprovement
                     ? currentProject?.coachMode === "baymax"
                       ? "Improvement Protocol Required"
@@ -1895,112 +1966,121 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       : currentProject?.coachMode === "edna"
                         ? "Here's My Take, Darling"
                         : "Coach Feedback"}
-                </h2>
-                {currentTask?.feedback && (
-                  <div
-                    className={`border rounded-lg p-4 mb-6 ${
-                      currentTask.needsImprovement
-                        ? "bg-amber-50 border-amber-200"
-                        : "bg-blue-50 border-blue-200"
-                    }`}
+                </em>
+              </h2>
+              <p
+                className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-7"
+                style={{ fontFamily: "'Inconsolata', monospace" }}
+              >
+                {currentTask?.needsImprovement ? "some things to address" : "notes from your coach"}
+              </p>
+
+              {currentTask?.feedback && (
+                <div
+                  className={`border-l-2 rounded-r-lg px-5 py-4 mb-6 text-left ${
+                    currentTask.needsImprovement
+                      ? "border-[#b85c38] bg-[#fdf8f5]"
+                      : "border-[#1a5c32] bg-[#f5faf6]"
+                  }`}
+                >
+                  <p
+                    className="mb-4 text-[0.9rem] text-[#1a1814] leading-relaxed"
+                    style={{ fontFamily: "'Cormorant Garamond', serif" }}
                   >
-                    <p className={`mb-4 ${currentTask.needsImprovement ? "text-amber-900" : "text-blue-900"}`}>
-                      {currentTask.feedback}
-                    </p>
-                    {currentTask.actionablePoints && currentTask.actionablePoints.length > 0 && (
-                      <div className="text-left">
-                        <h4
-                          className={`font-medium mb-2 ${
-                            currentTask.needsImprovement ? "text-amber-900" : "text-blue-900"
-                          }`}
-                        >
-                          {currentTask.needsImprovement
-                            ? currentProject?.coachMode === "baymax"
-                              ? "Fix these now:"
-                              : currentProject?.coachMode === "edna"
-                                ? "Fix these now:"
-                                : "What to fix:"
-                            : currentProject?.coachMode === "baymax"
-                              ? "Notes for next time:"
-                              : currentProject?.coachMode === "edna"
-                                ? "Keep in mind:"
-                                : "For next time:"}
-                        </h4>
-                        <ul
-                          className={`space-y-1 text-sm ${
-                            currentTask.needsImprovement ? "text-amber-800" : "text-blue-800"
-                          }`}
-                        >
-                          {currentTask.actionablePoints.map((point, index) => (
-                            <li key={index} className="flex items-start">
-                              <span className="mr-2">•</span>
-                              <span>{point}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="flex gap-3 justify-center flex-wrap">
-                  <Button onClick={handleRedoTask} variant="outline" size="lg">
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Review
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      if (!currentProject) return
-                      const updatedProject = { ...currentProject }
-                      const currentTaskIndex = currentProject.currentTaskIndex
+                    {currentTask.feedback}
+                  </p>
+                  {currentTask.actionablePoints && currentTask.actionablePoints.length > 0 && (
+                    <div>
+                      <p
+                        className="text-[0.6rem] uppercase tracking-[0.12em] text-[#9a948a] mb-2"
+                        style={{ fontFamily: "'Inconsolata', monospace" }}
+                      >
+                        {currentTask.needsImprovement
+                          ? currentProject?.coachMode === "baymax"
+                            ? "Fix these now:"
+                            : "What to fix:"
+                          : currentProject?.coachMode === "baymax"
+                            ? "Notes for next time:"
+                            : currentProject?.coachMode === "edna"
+                              ? "Keep in mind:"
+                              : "For next time:"}
+                      </p>
+                      <ul className="space-y-1.5">
+                        {currentTask.actionablePoints.map((point, index) => (
+                          <li
+                            key={index}
+                            className="flex items-start text-[0.82rem] text-[#4a4640]"
+                            style={{ fontFamily: "'Inconsolata', monospace" }}
+                          >
+                            <span className="mr-2 text-[#9a948a]">—</span>
+                            <span>{point}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
 
-                      // Mark CURRENT task as complete (not next task)
-                      updatedProject.tasks[currentTaskIndex].completed = true
-                      updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
-                      updatedProject.tasks[currentTaskIndex].completedAt = new Date()
-                      updatedProject.tasks[currentTaskIndex].needsImprovement = false
-                      updatedProject.completedWork.push(taskInput)
+              <div className="flex gap-3 justify-center flex-wrap">
+                <button
+                  onClick={handleRedoTask}
+                  className="border border-[#e0dbd0] rounded-lg px-5 py-2.5 text-[0.75rem] text-[#4a4640] hover:border-[#c8c2b4] hover:text-[#1a1814] transition-all bg-transparent"
+                  style={{ fontFamily: "'Inconsolata', monospace" }}
+                >
+                  ↩ Review
+                </button>
+                <button
+                  onClick={() => {
+                    if (!currentProject) return
+                    const updatedProject = { ...currentProject }
+                    const currentTaskIndex = currentProject.currentTaskIndex
 
-                      // Save the project
+                    // Mark CURRENT task as complete (not next task)
+                    updatedProject.tasks[currentTaskIndex].completed = true
+                    updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
+                    updatedProject.tasks[currentTaskIndex].completedAt = new Date()
+                    updatedProject.tasks[currentTaskIndex].needsImprovement = false
+                    updatedProject.completedWork.push(taskInput)
+
+                    // Save the project
+                    setCurrentProject(updatedProject)
+                    setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
+
+                    // Immediately save when task is marked as complete
+                    saveProjectToSupabase(updatedProject).catch((error) => {
+                      console.error("Error saving completed task:", error)
+                    })
+
+                    // Automatically move to next task (no confirmation page)
+                    updatedProject.currentTaskIndex += 1
+
+                    if (updatedProject.currentTaskIndex >= updatedProject.tasks.length) {
+                      // If last task, go to completion screen
+                      setCurrentState("completed")
+                    } else {
+                      // Load next task immediately
                       setCurrentProject(updatedProject)
                       setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-                      
-                      // Immediately save when task is marked as complete
-                      saveProjectToSupabase(updatedProject).catch((error) => {
-                        console.error("Error saving completed task:", error)
-                      })
+                      setShowNextButton(false)
+                      setShowRedoButton(false)
+                      setShowCreateTaskButton(false)
 
-                      // Automatically move to next task (no confirmation page)
-                      updatedProject.currentTaskIndex += 1
-
-                      if (updatedProject.currentTaskIndex >= updatedProject.tasks.length) {
-                        // If last task, go to completion screen
-                        setCurrentState("completed")
-                      } else {
-                        // Load next task immediately
-                        setCurrentProject(updatedProject)
-                        setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
-                        setShowNextButton(false)
-                        setShowRedoButton(false)
-                        setShowCreateTaskButton(false)
-
-                        const nextTask = updatedProject.tasks[updatedProject.currentTaskIndex]
-                        setCustomDuration([nextTask.suggestedDuration])
-                        setCurrentState("working")
-                        startCurrentTask(updatedProject)
-                      }
-                    }}
-                    variant="outline"
-                    size="lg"
-                    className="bg-gray-50"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Good enough
-                  </Button>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+                      const nextTask = updatedProject.tasks[updatedProject.currentTaskIndex]
+                      setCustomDuration([nextTask.suggestedDuration])
+                      setCurrentState("working")
+                      startCurrentTask(updatedProject)
+                    }
+                  }}
+                  className="bg-[#1a1814] text-[#f7f4ee] rounded-lg px-5 py-2.5 text-[0.75rem] hover:bg-[#2d2925] transition-all"
+                  style={{ fontFamily: "'Inconsolata', monospace" }}
+                >
+                  Good enough →
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     )
   }
@@ -2033,7 +2113,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                 <h3 className="font-medium text-blue-800 mb-2">Your Journey</h3>
                 <div className="text-sm text-blue-700 space-y-1">
                   <p>Tasks completed: {currentProject?.tasks.filter((t) => t.completed).length}</p>
-                  <p>Skips used: {currentProject?.skipsUsed}/3</p>
                   <p>Total attempts: {currentProject?.tasks.reduce((sum, t) => sum + (t.attempts || 0), 0)}</p>
                   <p>
                     Coach:{" "}
@@ -2327,7 +2406,7 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                   <div className="flex items-start space-x-2">
                     <Lightbulb className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
                     <div className="text-blue-800">
-                      <p className="whitespace-pre-wrap">{currentTask?.description}</p>
+                      <p className="whitespace-pre-wrap">{currentTask?.description?.split("Expectations:")[0].trim()}</p>
                     </div>
                   </div>
                 </div>
@@ -2409,15 +2488,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                     <div className="flex items-center justify-center space-x-2">
                       <Button variant="outline" size="sm" onClick={pauseTimer} disabled={timeRemaining === 0}>
                         {isTimerRunning ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={skipTask}
-                        disabled={(currentProject?.skipsUsed || 0) >= 3}
-                      >
-                        <SkipForward className="h-4 w-4" />
-                        Skip ({3 - (currentProject?.skipsUsed || 0)} left)
                       </Button>
                       <Button
                         variant="default"
@@ -2786,6 +2856,16 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
           </div>
         </div>
       </div>
+
+      {/* Chunk hint toast */}
+      {showChunkHint && (
+        <div
+          className="fixed bottom-5 right-5 z-50 bg-white border border-[#e0dbd0] rounded-lg px-4 py-3 text-[0.72rem] text-[#9a948a] shadow-sm max-w-[220px] transition-opacity duration-500"
+          style={{ fontFamily: "'Inconsolata', monospace" }}
+        >
+          Tired or unmotivated? Try breaking this task into smaller chunks.
+        </div>
+      )}
 
       {/* Full Draft Modal */}
       {showDraftModal && (
