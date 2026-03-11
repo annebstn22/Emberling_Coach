@@ -67,6 +67,7 @@ interface Task {
   parentTaskId?: string
   subtasks?: Task[]
   actionablePoints?: string[]
+  expectations?: string[]
 }
 
 interface Project {
@@ -259,6 +260,21 @@ export default function WritingCoachApp({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialProjectId, projects])
 
+  const extractExpectationsFromDescription = (description: string | undefined) => {
+    if (!description) return undefined
+    const idx = description.indexOf("Expectations:")
+    if (idx < 0) return undefined
+    const tail = description.slice(idx + "Expectations:".length)
+    const lines = tail
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .filter((l) => l.startsWith("-"))
+      .map((l) => l.replace(/^-+\s*/, "").trim())
+      .filter(Boolean)
+    return lines.length ? lines : undefined
+  }
+
   // Load projects from Supabase
   const loadProjectsFromSupabase = async (userId: string) => {
     try {
@@ -287,6 +303,7 @@ export default function WritingCoachApp({
             id: t.id,
             title: t.title,
             description: t.description,
+            expectations: extractExpectationsFromDescription(t.description),
             focus: t.focus,
             duration: t.duration,
             suggestedDuration: t.suggested_duration,
@@ -870,6 +887,8 @@ TASK REQUIREMENTS:
 - Break research into "write research notes" or "write summary"
 - Turn planning into "write outline" or "write draft structure"
 - Make every task actionable with measurable text output
+- Order tasks so expectations start LOW and increase: early tasks should prioritize momentum and messy output; later tasks should emphasize clarity, structure, and finally polish.
+- In each task description, include a short section called "Expectations:" with 2-4 bullet points that match that task's quality bar (not wordy).
 
 JSON structure:
 [
@@ -932,12 +951,60 @@ Writing project: "${projectDescription}"`
         }
 
         // Create new project - use UUIDs for Supabase compatibility
+        const buildExpectations = (taskIndex: number, totalTasks: number) => {
+          const denom = Math.max(1, totalTasks - 1)
+          const t = taskIndex / denom
+
+          if (t <= 0.25) {
+            return [
+              "Prioritize momentum: get words down (fragments OK)",
+              "Use placeholders like [TODO] instead of stopping",
+              "Do not polish; if it reads too pristine, loosen it",
+            ]
+          }
+
+          if (t <= 0.55) {
+            return [
+              "Complete the key content for this task (rough OK)",
+              "Basic structure/ordering is enough; keep moving",
+              "Leave grammar/style fixes for later unless they block meaning",
+            ]
+          }
+
+          if (t <= 0.8) {
+            return [
+              "Make it clear and coherent (reader can follow)",
+              "Add 1-2 concrete examples/details where needed",
+              "Fix the biggest confusing sentences (not every typo)",
+            ]
+          }
+
+          return [
+            "Polish for readability: grammar, concision, flow",
+            "Strengthen transitions and tighten redundant lines",
+            "Make the tone consistent and intentional",
+          ]
+        }
+
+        const withExpectations = (task: any, index: number, total: number) => {
+          const expectations = buildExpectations(index, total)
+          const desc = typeof task?.description === "string" ? task.description.trim() : ""
+          const expectationsBlock =
+            "\n\nExpectations:\n" + expectations.map((e) => `- ${e}`).join("\n")
+
+          return {
+            ...task,
+            expectations,
+            description: desc.includes("Expectations:") ? desc : (desc + expectationsBlock).trim(),
+          }
+        }
+
         const newProject: Project = {
           id: crypto.randomUUID(),
           name: projectName,
           description: projectDescription,
           tasks: tasks.map((task: any, index: number) => ({
-            ...task,
+            ...withExpectations(task, index, tasks.length),
             completed: false,
             needsImprovement: false,
             attempts: 0,
@@ -1051,6 +1118,45 @@ Writing project: "${projectDescription}"`
     setIsEvaluating(true)
     const currentTask = currentProject.tasks[currentProject.currentTaskIndex]
     const evalPersonality = getCoachPersonality(currentProject.coachMode)
+    const totalTasks = currentProject.tasks.length
+    const currentTaskIndex = currentProject.currentTaskIndex
+    const expectations =
+      currentTask.expectations && currentTask.expectations.length
+        ? currentTask.expectations
+        : (() => {
+            const denom = Math.max(1, totalTasks - 1)
+            const t = currentTaskIndex / denom
+
+            if (t <= 0.25) {
+              return [
+                "Prioritize momentum: get words down (fragments OK)",
+                "Use placeholders like [TODO] instead of stopping",
+                "Do not polish; if it reads too pristine, loosen it",
+              ]
+            }
+
+            if (t <= 0.55) {
+              return [
+                "Complete the key content for this task (rough OK)",
+                "Basic structure/ordering is enough; keep moving",
+                "Leave grammar/style fixes for later unless they block meaning",
+              ]
+            }
+
+            if (t <= 0.8) {
+              return [
+                "Make it clear and coherent (reader can follow)",
+                "Add 1-2 concrete examples/details where needed",
+                "Fix the biggest confusing sentences (not every typo)",
+              ]
+            }
+
+            return [
+              "Polish for readability: grammar, concision, flow",
+              "Strengthen transitions and tighten redundant lines",
+              "Make the tone consistent and intentional",
+            ]
+          })()
 
     const maxRetries = 2
     let evaluation = null
@@ -1091,12 +1197,23 @@ ${
 
 CRITICAL: Respond with ONLY valid JSON. No explanations before or after. Just the JSON object.
 
-Task details:
+TASK DETAILS:
 - Title: ${currentTask.title}
 - Duration: ${currentTask.duration} minutes
 - Focus: ${currentTask.focus}
-- User's work: "${taskInput || "No input provided"}"
-- Word count: ${taskInput.trim().split(/\s+/).length} words
+
+EXPECTATIONS (use as your checklist — do NOT grade above this bar):
+${expectations.map((e) => `- ${e}`).join("\n")}
+
+USER'S WORK:
+"${taskInput || "No input provided"}"
+
+WORD COUNT:
+${taskInput.trim().split(/\s+/).length} words
+
+EVALUATION RULES:
+- Judge against the Expectations above (not a higher bar)
+- If this is an early, low-expectation task and the writing is unusually polished/pristine, flag that as possible perfectionism and suggest a more iterative approach
 
 Return EXACTLY this JSON structure (no markdown, no additional text):
 {
@@ -1215,37 +1332,25 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
     const currentTaskIndex = currentProject.currentTaskIndex
 
     updatedProject.tasks[currentTaskIndex].feedback = evaluation.feedback
+    updatedProject.tasks[currentTaskIndex].actionablePoints = evaluation.actionablePoints
     updatedProject.tasks[currentTaskIndex].attempts = (updatedProject.tasks[currentTaskIndex].attempts || 0) + 1
+    updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
+    updatedProject.tasks[currentTaskIndex].needsImprovement = !!evaluation.needsImprovement
+    // IMPORTANT: do not auto-complete or advance based on evaluation.
+    // The user must choose: "Good enough" (complete + advance) or "Review" (return to editing).
+    updatedProject.tasks[currentTaskIndex].completed = false
 
-    if (evaluation.shouldContinue && !evaluation.needsImprovement) {
-      updatedProject.tasks[currentTaskIndex].completed = true
-      updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
-      updatedProject.tasks[currentTaskIndex].completedAt = new Date()
-      updatedProject.tasks[currentTaskIndex].needsImprovement = false
-      updatedProject.completedWork.push(taskInput)
-      setShowNextButton(true)
-      setShowRedoButton(false)
-      setShowCreateTaskButton(false)
-    } else {
-      updatedProject.tasks[currentTaskIndex].needsImprovement = true
-      updatedProject.tasks[currentTaskIndex].completed = false
-      updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
-      updatedProject.tasks[currentTaskIndex].actionablePoints = evaluation.actionablePoints
-
-      setShowNextButton(false)
-      setShowRedoButton(true)
-      setShowCreateTaskButton(evaluation.suggestNewTask || false)
-    }
+    setShowNextButton(false)
+    setShowRedoButton(false)
+    setShowCreateTaskButton(evaluation.suggestNewTask || false)
 
     setCurrentProject(updatedProject)
     setProjects((prev) => prev.map((p) => (p.id === updatedProject.id ? updatedProject : p)))
     
-    // Immediately save when a task is completed
-    if (evaluation.shouldContinue && !evaluation.needsImprovement) {
-      saveProjectToSupabase(updatedProject).catch((error) => {
-        console.error("Error saving completed task:", error)
-      })
-    }
+    // Save the evaluation + current work snapshot so "Review" preserves content even after refresh
+    saveProjectToSupabase(updatedProject).catch((error) => {
+      console.error("Error saving evaluated task:", error)
+    })
     
     setIsEvaluating(false)
   }
@@ -1824,16 +1929,10 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                   </div>
                 )}
                 <div className="flex gap-3 justify-center flex-wrap">
-                  {showRedoButton && (
-                    <Button onClick={handleRedoTask} variant="outline" size="lg">
-                      <RotateCcw className="h-4 w-4 mr-2" />
-                      {currentProject?.coachMode === "baymax"
-                        ? "Retry Protocol"
-                        : currentProject?.coachMode === "edna"
-                          ? "Try Again"
-                          : "Try Again"}
-                    </Button>
-                  )}
+                  <Button onClick={handleRedoTask} variant="outline" size="lg">
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Review
+                  </Button>
                   <Button
                     onClick={() => {
                       if (!currentProject) return
@@ -1845,7 +1944,6 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                       updatedProject.tasks[currentTaskIndex].userWork = (previousWork + "\n\n" + taskInput).trim()
                       updatedProject.tasks[currentTaskIndex].completedAt = new Date()
                       updatedProject.tasks[currentTaskIndex].needsImprovement = false
-                      updatedProject.tasks[currentTaskIndex].feedback = "Marked as good enough by user"
                       updatedProject.completedWork.push(taskInput)
 
                       // Save the project
@@ -1882,22 +1980,8 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                     className="bg-gray-50"
                   >
                     <CheckCircle className="h-4 w-4 mr-2" />
-                    {currentProject?.coachMode === "baymax"
-                      ? "Mark Complete"
-                      : currentProject?.coachMode === "edna"
-                        ? "Good Enough"
-                        : "Good Enough"}
+                    Good enough
                   </Button>
-                  {showNextButton && (
-                    <Button onClick={handleNextStep} size="lg">
-                      <ArrowRight className="h-4 w-4 mr-2" />
-                      {currentProject?.coachMode === "baymax"
-                        ? "Next Task"
-                        : currentProject?.coachMode === "edna"
-                          ? "Move On"
-                          : "Next Step"}
-                    </Button>
-                  )}
                 </div>
               </>
             )}
@@ -2233,6 +2317,25 @@ Provide EXACTLY 5 actionable points. Evaluate if the work is sufficient for a ${
                     </div>
                   </div>
                 </div>
+
+                {currentTask?.expectations && currentTask.expectations.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <div className="flex items-start space-x-2">
+                      <Target className="h-5 w-5 text-slate-700 mt-0.5 flex-shrink-0" />
+                      <div className="text-slate-800">
+                        <p className="font-medium mb-2">Expectations for this task</p>
+                        <ul className="space-y-1 text-sm text-slate-700">
+                          {currentTask.expectations.slice(0, 4).map((e, idx) => (
+                            <li key={idx} className="flex items-start">
+                              <span className="mr-2">•</span>
+                              <span>{e}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Duration Control */}
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
