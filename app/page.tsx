@@ -2,7 +2,7 @@
 
 import type React from "react"
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -19,8 +19,57 @@ export default function HomePage() {
   const [name, setName] = useState("")
   const [authError, setAuthError] = useState("")
   const [resetEmailSent, setResetEmailSent] = useState(false)
+  const [confirmationPending, setConfirmationPending] = useState(false)
+  const [resendSent, setResendSent] = useState(false)
+  const [resendCooldown, setResendCooldown] = useState(0)
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current)
+    }
+  }, [])
 
   const isStrongPassword = (p: string) => /^(?=.*[A-Z])(?=.*\d).{8,}$/.test(p)
+
+  const startCooldown = () => {
+    if (cooldownRef.current) clearInterval(cooldownRef.current)
+    setResendCooldown(60)
+    cooldownRef.current = setInterval(() => {
+      setResendCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownRef.current!)
+          cooldownRef.current = null
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  const clearConfirmation = () => {
+    setConfirmationPending(false)
+    setResendSent(false)
+    setResendCooldown(0)
+    if (cooldownRef.current) { clearInterval(cooldownRef.current); cooldownRef.current = null }
+  }
+
+  const handleResendConfirmation = async () => {
+    setAuthError("")
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`,
+      },
+    })
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+    setResendSent(true)
+    startCooldown()
+  }
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -37,7 +86,10 @@ export default function HomePage() {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        options: {
+          data: { name },
+          emailRedirectTo: `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`,
+        },
       })
       if (error) {
         setAuthError(
@@ -46,9 +98,11 @@ export default function HomePage() {
         return
       }
       if (data.user) {
-        setEmail("")
+        // Keep email in state for the resend screen. Clear the rest.
         setPassword("")
         setName("")
+        setConfirmationPending(true)
+        startCooldown() // Initial confirmation email already sent — enforce 60s before resend
       }
     } else {
       if (!email.trim() || !password.trim()) {
@@ -57,7 +111,12 @@ export default function HomePage() {
       }
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
-        setAuthError(error.message || "Invalid email or password")
+        if (error.message.toLowerCase().includes("email not confirmed")) {
+          // Whether the link is expired or not, resend() always issues a fresh one
+          setConfirmationPending(true)
+        } else {
+          setAuthError(error.message || "Invalid email or password")
+        }
         return
       }
       if (data.user) {
@@ -76,7 +135,7 @@ export default function HomePage() {
       return
     }
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${typeof window !== "undefined" ? window.location.origin : ""}/auth/reset`,
+      redirectTo: `${typeof window !== "undefined" ? window.location.origin : ""}/auth/callback`,
     })
     if (error) {
       setAuthError(error.message)
@@ -94,6 +153,71 @@ export default function HomePage() {
   }
 
   if (!user) {
+    if (confirmationPending) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
+          <Card className="w-full max-w-md" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl font-light" style={{ fontFamily: 'var(--font-serif)', color: 'var(--ink)' }}>
+                Check your inbox
+              </CardTitle>
+              <p className="mt-2" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>
+                We sent a confirmation link to
+              </p>
+              <p className="mt-1" style={{ color: 'var(--ink)', fontFamily: 'var(--font-mono)', fontSize: '0.875rem', fontWeight: 600 }}>
+                {email}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4 text-center">
+              {authError && (
+                <div className="text-sm" style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>{authError}</div>
+              )}
+              {resendSent ? (
+                <div className="text-sm rounded p-3" style={{ color: 'var(--green)', background: 'var(--green-bg)', border: '1px solid var(--green-bdr)', fontFamily: 'var(--font-mono)' }}>
+                  Confirmation email sent again!
+                </div>
+              ) : (
+                <p className="text-sm" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                  Click the link in the email to confirm your account. Not in your inbox? Check spam, or resend below.
+                </p>
+              )}
+              {resendCooldown > 0 ? (
+                <p className="text-sm" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                  Resend available in {resendCooldown}s
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResendConfirmation}
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.875rem',
+                    color: 'var(--bg)',
+                    background: 'var(--ink)',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '0.6rem 1.25rem',
+                    cursor: 'pointer',
+                    width: '100%',
+                  }}
+                >
+                  {resendSent ? "Resend again" : "Resend confirmation email"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { clearConfirmation(); setAuthMode("login"); setAuthError("") }}
+                className="text-sm block w-full"
+                style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)', background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                Back to login
+              </button>
+            </CardContent>
+          </Card>
+        </div>
+      )
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
         <Card className="w-full max-w-md" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
