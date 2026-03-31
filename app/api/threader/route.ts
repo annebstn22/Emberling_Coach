@@ -862,38 +862,61 @@ export async function POST(request: NextRequest) {
     // Step 1: Expand all points semantically
     const expandedPoints = await expandPoints(validPoints)
 
-    // Step 2: Build transition matrix (cosine similarity + directional score)
+    // Step 2: Build transition matrix
+    // Evaluation (ordering.test.ts, 6 gold examples) showed:
+    //   Jaccard+length baseline          tau=0.333 (best)
+    //   HF cosine alone (all-mpnet)      tau=0.178
+    //   NLI directional (roberta/bart)   tau=-0.189 (wrong signal — entailment ≠ discourse flow)
+    //
+    // Strategy: try OpenAI embeddings (best pure semantic), blend 50/50 with Jaccard as a
+    // hedge (hybrid beats pure cosine in preliminary tests). If OpenAI key is absent,
+    // fall back to HF mpnet, then to Jaccard-only.
     const texts = expandedPoints.map((p) => p.expanded)
-    const embeddings = await computeEmbeddings(texts, {
-      kind: "openai",
-      model: "text-embedding-3-small",
-    })
-    const cosineMatrix = computeCosineMatrix(embeddings)
 
-    let directionalMatrix: TransitionMatrix
-    let alpha = 1.0
-    let beta = 0.0
+    // Jaccard+length matrix (always available, currently the strongest single signal)
+    const jaccardMatrix: TransitionMatrix = (() => {
+      const n = texts.length
+      const m: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (i === j) continue
+          const t1 = texts[i].toLowerCase()
+          const t2 = texts[j].toLowerCase()
+          const w1 = new Set(t1.split(/\s+/).filter(Boolean))
+          const w2 = new Set(t2.split(/\s+/).filter(Boolean))
+          const inter = [...w1].filter((x) => w2.has(x)).length
+          const union = new Set([...w1, ...w2]).size
+          const lex = union > 0 ? inter / union : 0
+          const len = 1 - Math.abs(t1.length - t2.length) / Math.max(t1.length, t2.length, 1)
+          m[i][j] = 0.5 * lex + 0.5 * len
+        }
+      }
+      return m
+    })()
+
+    let transitionMatrix: TransitionMatrix
     try {
-      directionalMatrix = await computeDirectionalScores(texts, {
-        kind: "nli",
-        model: "FacebookAI/roberta-large-mnli",
+      const embeddings = await computeEmbeddings(texts, {
+        kind: "openai",
+        model: "text-embedding-3-small",
       })
-      alpha = 0.4
-      beta = 0.6
+      const cosineMatrix = computeCosineMatrix(embeddings)
+      // Blend: 50% Jaccard (proven strong) + 50% cosine (semantic richness)
+      transitionMatrix = buildTransitionMatrix(jaccardMatrix, cosineMatrix, 0.5, 0.5)
     } catch {
-      // Cross-encoder not available on this inference tier; fall back to cosine-only
-      console.warn("Directional scoring unavailable, using cosine-only ordering")
-      directionalMatrix = Array.from({ length: texts.length }, () =>
-        new Array(texts.length).fill(0),
-      )
+      // No OpenAI key — try HF mpnet, then fall back to Jaccard alone
+      try {
+        const embeddings = await computeEmbeddings(texts, {
+          kind: "huggingface",
+          model: "sentence-transformers/all-mpnet-base-v2",
+        })
+        const cosineMatrix = computeCosineMatrix(embeddings)
+        transitionMatrix = buildTransitionMatrix(jaccardMatrix, cosineMatrix, 0.5, 0.5)
+      } catch {
+        console.warn("Embedding APIs unavailable, using Jaccard+length ordering")
+        transitionMatrix = jaccardMatrix
+      }
     }
-
-    const transitionMatrix = buildTransitionMatrix(
-      cosineMatrix,
-      directionalMatrix,
-      alpha,
-      beta,
-    )
 
     // Step 3: Generate three orderings using different algorithms
     const orderings: OrderingResult[] = [

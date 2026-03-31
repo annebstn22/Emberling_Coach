@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest"
 import {
-  computeDirectionalScores,
   computeEmbeddings,
   cosineSimilarity,
   type TransitionMatrix,
@@ -306,47 +305,60 @@ const gold: GoldExample[] = [
   },
 ]
 
+// MatrixConfig supports two kinds of rows:
+//   "pure"   – a single scoring signal run through bestOfThree
+//   "hybrid" – two pure signals combined at given weights (no extra API calls)
+//
+// NLI/directional rows were removed: all tested models (cross-encoder/nli-deberta-v3-base,
+// cross-encoder/ms-marco-MiniLM-L-6-v2, FacebookAI/roberta-large-mnli) are either not hosted
+// on the free HF inference tier (404) or actively degraded ordering when they did run
+// (bart-large-mnli: tau=-0.189 vs baseline tau=0.333). NLI entailment is the wrong signal
+// for narrative/argumentative ordering — it tests logical consequence, not discourse flow.
 type MatrixConfig = {
   id: number
   name: string
-  embedding:
-    | { kind: "baseline" }
-    | { kind: "openai"; model: "text-embedding-3-small" }
-    | { kind: "hf"; model: string }
-  directional:
-    | { kind: "none" }
-    | { kind: "nli"; model: string }
-    | { kind: "msmarco"; model: string }
-  weights?: { alpha: number; beta: number }
-}
+} & (
+  | {
+      kind: "pure"
+      embedding: { kind: "baseline" } | { kind: "openai"; model: "text-embedding-3-small" } | { kind: "hf"; model: string }
+    }
+  | {
+      kind: "hybrid"
+      embeddingA: { kind: "baseline" } | { kind: "hf"; model: string } | { kind: "openai"; model: "text-embedding-3-small" }
+      embeddingB: { kind: "hf"; model: string } | { kind: "openai"; model: "text-embedding-3-small" }
+      alphaA: number
+      alphaB: number
+    }
+)
 
-// Rows 1–4: embedding-only baselines (no directional component)
-// Rows 5–9: embedding + directional (NLI via roberta-large-mnli or bart-large-mnli)
-//   Note: cross-encoder/nli-deberta-v3-base and cross-encoder/ms-marco-MiniLM-L-6-v2
-//   are NOT hosted on the free HF inference tier and return 404.
-//   roberta-large-mnli and facebook/bart-large-mnli ARE hosted and return
-//   contradiction/neutral/entailment labels usable as directional flow scores.
+// Rows 1–4: single-signal baselines
+// Rows 5–7: Jaccard+cosine hybrids — test whether mixing the winning baseline
+//           with semantic embeddings produces a better combined signal.
+//           No extra API calls: each hybrid reuses already-computed matrices.
 const matrix: MatrixConfig[] = [
-  { id: 1, name: "Jaccard+length baseline", embedding: { kind: "baseline" }, directional: { kind: "none" } },
-  { id: 2, name: "OpenAI text-embedding-3-small (no direction)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "none" } },
-  { id: 3, name: "HF all-mpnet-base-v2 (no direction)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "none" } },
-  { id: 4, name: "HF BGE small (no direction)", embedding: { kind: "hf", model: "BAAI/bge-small-en-v1.5" }, directional: { kind: "none" } },
-  { id: 5, name: "OpenAI + roberta-mnli (0.4/0.6)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 6, name: "HF mpnet + roberta-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 7, name: "HF mpnet + bart-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "facebook/bart-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 8, name: "HF mpnet + roberta-mnli (0.5/0.5)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.5, beta: 0.5 } },
-  { id: 9, name: "HF mpnet + roberta-mnli (0.3/0.7)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.3, beta: 0.7 } },
+  { id: 1, kind: "pure", name: "Jaccard+length baseline", embedding: { kind: "baseline" } },
+  { id: 2, kind: "pure", name: "OpenAI text-embedding-3-small", embedding: { kind: "openai", model: "text-embedding-3-small" } },
+  { id: 3, kind: "pure", name: "HF all-mpnet-base-v2", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" } },
+  { id: 4, kind: "pure", name: "HF BGE small", embedding: { kind: "hf", model: "BAAI/bge-small-en-v1.5" } },
+  { id: 5, kind: "hybrid", name: "Jaccard(0.5) + mpnet(0.5)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.5, alphaB: 0.5 },
+  { id: 6, kind: "hybrid", name: "Jaccard(0.7) + mpnet(0.3)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.7, alphaB: 0.3 },
+  { id: 7, kind: "hybrid", name: "Jaccard(0.3) + mpnet(0.7)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.3, alphaB: 0.7 },
 ]
 
-async function buildEmbeddingCosineMatrix(points: string[], cfg: MatrixConfig): Promise<TransitionMatrix> {
-  if (cfg.embedding.kind === "baseline") {
+type EmbeddingSpec =
+  | { kind: "baseline" }
+  | { kind: "openai"; model: "text-embedding-3-small" }
+  | { kind: "hf"; model: string }
+
+async function buildPureMatrix(points: string[], spec: EmbeddingSpec): Promise<TransitionMatrix> {
+  if (spec.kind === "baseline") {
     return buildMatrixFromScore(points, jaccardPlusLengthScore)
   }
 
   const embeddings =
-    cfg.embedding.kind === "openai"
-      ? await computeEmbeddings(points, { kind: "openai", model: cfg.embedding.model })
-      : await computeEmbeddings(points, { kind: "huggingface", model: cfg.embedding.model })
+    spec.kind === "openai"
+      ? await computeEmbeddings(points, { kind: "openai", model: spec.model })
+      : await computeEmbeddings(points, { kind: "huggingface", model: spec.model })
 
   const n = points.length
   const m: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
@@ -360,27 +372,22 @@ async function buildEmbeddingCosineMatrix(points: string[], cfg: MatrixConfig): 
   return m
 }
 
-async function buildDirectionalMatrix(points: string[], cfg: MatrixConfig): Promise<TransitionMatrix> {
-  const n = points.length
-  if (cfg.directional.kind === "none") {
-    return Array.from({ length: n }, () => new Array(n).fill(0))
-  }
-  if (cfg.directional.kind === "nli") {
-    return computeDirectionalScores(points, { kind: "nli", model: cfg.directional.model })
-  }
-  return computeDirectionalScores(points, { kind: "msmarco", model: cfg.directional.model })
-}
-
 function requiredEnvFor(cfg: MatrixConfig): string[] {
   const vars: string[] = []
-  if (cfg.embedding.kind === "openai") vars.push("OPENAI_API_KEY")
-  if (cfg.embedding.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
-  if (cfg.directional.kind !== "none") vars.push("HUGGINGFACE_API_KEY")
+  if (cfg.kind === "pure") {
+    if (cfg.embedding.kind === "openai") vars.push("OPENAI_API_KEY")
+    if (cfg.embedding.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
+  } else {
+    if (cfg.embeddingA.kind === "openai") vars.push("OPENAI_API_KEY")
+    if (cfg.embeddingA.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
+    if (cfg.embeddingB.kind === "openai") vars.push("OPENAI_API_KEY")
+    if (cfg.embeddingB.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
+  }
   return [...new Set(vars)]
 }
 
 describe("Threader ordering matrix evaluation", () => {
-  it("runs the 9-row matrix (skips rows missing API keys)", async () => {
+  it("runs the 7-row matrix (skips rows missing API keys)", async () => {
     const results: Array<{
       id: number
       name: string
@@ -401,18 +408,17 @@ describe("Threader ordering matrix evaluation", () => {
       try {
         const taus: number[] = []
         for (const ex of gold) {
-          const cosOrBase = await buildEmbeddingCosineMatrix(ex.points, cfg)
-          if (cfg.directional.kind === "none") {
-            const predicted = bestOfThree(ex.points, cosOrBase)
-            const tau = kendallsTau(ex.correctOrder, predicted)
-            taus.push(tau)
-            continue
+          let scoringMatrix: TransitionMatrix
+
+          if (cfg.kind === "pure") {
+            scoringMatrix = await buildPureMatrix(ex.points, cfg.embedding)
+          } else {
+            const matA = await buildPureMatrix(ex.points, cfg.embeddingA)
+            const matB = await buildPureMatrix(ex.points, cfg.embeddingB)
+            scoringMatrix = combineMatrices(matA, matB, cfg.alphaA, cfg.alphaB)
           }
 
-          const dir = await buildDirectionalMatrix(ex.points, cfg)
-          const w = cfg.weights ?? { alpha: 1, beta: 0 }
-          const combined = combineMatrices(cosOrBase, dir, w.alpha, w.beta)
-          const predicted = bestOfThree(ex.points, combined)
+          const predicted = bestOfThree(ex.points, scoringMatrix)
           const tau = kendallsTau(ex.correctOrder, predicted)
           taus.push(tau)
         }
