@@ -315,21 +315,27 @@ type MatrixConfig = {
     | { kind: "hf"; model: string }
   directional:
     | { kind: "none" }
-    | { kind: "nli"; model: "cross-encoder/nli-deberta-v3-base" }
-    | { kind: "msmarco"; model: "cross-encoder/ms-marco-MiniLM-L-6-v2" }
+    | { kind: "nli"; model: string }
+    | { kind: "msmarco"; model: string }
   weights?: { alpha: number; beta: number }
 }
 
+// Rows 1–4: embedding-only baselines (no directional component)
+// Rows 5–9: embedding + directional (NLI via roberta-large-mnli or bart-large-mnli)
+//   Note: cross-encoder/nli-deberta-v3-base and cross-encoder/ms-marco-MiniLM-L-6-v2
+//   are NOT hosted on the free HF inference tier and return 404.
+//   roberta-large-mnli and facebook/bart-large-mnli ARE hosted and return
+//   contradiction/neutral/entailment labels usable as directional flow scores.
 const matrix: MatrixConfig[] = [
   { id: 1, name: "Jaccard+length baseline", embedding: { kind: "baseline" }, directional: { kind: "none" } },
   { id: 2, name: "OpenAI text-embedding-3-small (no direction)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "none" } },
   { id: 3, name: "HF all-mpnet-base-v2 (no direction)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "none" } },
   { id: 4, name: "HF BGE small (no direction)", embedding: { kind: "hf", model: "BAAI/bge-small-en-v1.5" }, directional: { kind: "none" } },
-  { id: 5, name: "OpenAI + NLI (0.4/0.6)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 6, name: "HF mpnet + NLI (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 7, name: "HF mpnet + MS MARCO (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "msmarco", model: "cross-encoder/ms-marco-MiniLM-L-6-v2" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 8, name: "HF mpnet + NLI (0.5/0.5)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" }, weights: { alpha: 0.5, beta: 0.5 } },
-  { id: 9, name: "HF mpnet + NLI (0.3/0.7)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" }, weights: { alpha: 0.3, beta: 0.7 } },
+  { id: 5, name: "OpenAI + roberta-mnli (0.4/0.6)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
+  { id: 6, name: "HF mpnet + roberta-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
+  { id: 7, name: "HF mpnet + bart-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "facebook/bart-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
+  { id: 8, name: "HF mpnet + roberta-mnli (0.5/0.5)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.5, beta: 0.5 } },
+  { id: 9, name: "HF mpnet + roberta-mnli (0.3/0.7)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.3, beta: 0.7 } },
 ]
 
 async function buildEmbeddingCosineMatrix(points: string[], cfg: MatrixConfig): Promise<TransitionMatrix> {

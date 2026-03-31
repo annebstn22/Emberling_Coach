@@ -145,8 +145,8 @@ export async function computeEmbeddings(
 }
 
 type DirectionalProvider =
-  | { kind: "nli"; model: "cross-encoder/nli-deberta-v3-base" }
-  | { kind: "msmarco"; model: "cross-encoder/ms-marco-MiniLM-L-6-v2" }
+  | { kind: "nli"; model: string }
+  | { kind: "msmarco"; model: string }
 
 function softmax(logits: number[]): number[] {
   if (logits.length === 0) return []
@@ -157,6 +157,10 @@ function softmax(logits: number[]): number[] {
   return exps.map((v) => v / sum)
 }
 
+// Zero-shot NLI models (e.g. facebook/bart-large-mnli) use a different pipeline
+// and input format than standard text-classification pair models.
+const ZERO_SHOT_NLI_MODELS = new Set(["facebook/bart-large-mnli"])
+
 async function huggingFacePairScore(
   model: string,
   text: string,
@@ -164,8 +168,34 @@ async function huggingFacePairScore(
 ): Promise<unknown> {
   const apiKey = getHuggingFaceApiKey()
   const encodedModel = model.split("/").map(encodeURIComponent).join("/")
-  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
 
+  if (ZERO_SHOT_NLI_MODELS.has(model)) {
+    // bart-large-mnli: zero-shot-classification pipeline.
+    // We frame "textPair follows from text" as a candidate label.
+    const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/zero-shot-classification`
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: text,
+        parameters: {
+          candidate_labels: ["entailment", "neutral", "contradiction"],
+          hypothesis_template: `{}. ${textPair}`,
+        },
+      }),
+    })
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "")
+      throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
+    }
+    return (await res.json()) as unknown
+  }
+
+  // Standard NLI text-classification pair models (e.g. roberta-large-mnli)
+  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -188,28 +218,41 @@ async function huggingFacePairScore(
 }
 
 function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
-  // Common HF text-classification return: [{label, score}, ...]
+  // Standard text-classification return: [{label, score}, ...]
   if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
     const items = json as Array<{ label?: string; score?: number }>
-    const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
-    if (entail && typeof entail.score === "number") return entail.score
+    // Check it's label/score pairs (not a nested zero-shot result)
+    if (typeof (items[0] as any)?.label === "string") {
+      const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
+      if (entail && typeof entail.score === "number") return entail.score
+    }
   }
 
-  // Some pipelines return raw logits: [contradiction, neutral, entailment]
+  // Raw logits: [contradiction, neutral, entailment]
   if (Array.isArray(json) && json.length === 3 && json.every((x) => typeof x === "number")) {
     const probs = softmax(json as number[])
     return probs[2] ?? null
   }
 
-  // Some endpoints return nested: [{sequence, labels, scores}]
+  // Zero-shot-classification return (bart-large-mnli): { sequence, labels: [...], scores: [...] }
+  if (json !== null && typeof json === "object" && !Array.isArray(json)) {
+    const obj = json as any
+    if (Array.isArray(obj.labels) && Array.isArray(obj.scores)) {
+      const labels: unknown[] = obj.labels
+      const scores: unknown[] = obj.scores
+      const idx = labels.findIndex((l) => String(l).toLowerCase().includes("entail"))
+      const s = scores[idx]
+      if (typeof s === "number") return s
+    }
+  }
+
+  // Nested array: [{sequence, labels, scores}]
   if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
     const first = json[0] as any
     if (Array.isArray(first?.labels) && Array.isArray(first?.scores)) {
       const labels: unknown[] = first.labels
       const scores: unknown[] = first.scores
-      const idx = labels.findIndex((l) =>
-        String(l).toLowerCase().includes("entail"),
-      )
+      const idx = labels.findIndex((l) => String(l).toLowerCase().includes("entail"))
       const s = scores[idx]
       if (typeof s === "number") return s
     }
@@ -231,7 +274,7 @@ function extractMsMarcoScore(json: unknown): number | null {
 
 export async function computeDirectionalScores(
   texts: string[],
-  provider: DirectionalProvider = { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" },
+  provider: DirectionalProvider = { kind: "nli", model: "roberta-large-mnli" },
 ): Promise<TransitionMatrix> {
   const n = texts.length
   const matrix: TransitionMatrix = Array.from({ length: n }, () =>
@@ -819,7 +862,7 @@ export async function POST(request: NextRequest) {
     try {
       directionalMatrix = await computeDirectionalScores(texts, {
         kind: "nli",
-        model: "cross-encoder/nli-deberta-v3-base",
+        model: "roberta-large-mnli",
       })
       alpha = 0.4
       beta = 0.6
