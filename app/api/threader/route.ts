@@ -162,7 +162,7 @@ async function huggingFacePairScore(
   textPair: string,
 ): Promise<unknown> {
   const apiKey = getHuggingFaceApiKey()
-  const url = `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}`
+  const url = `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}/pipeline/text-classification`
 
   const res = await fetch(url, {
     method: "POST",
