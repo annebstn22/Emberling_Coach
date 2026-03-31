@@ -194,27 +194,41 @@ async function huggingFacePairScore(
     return (await res.json()) as unknown
   }
 
-  // Standard NLI text-classification pair models (e.g. roberta-large-mnli)
+  // Standard NLI text-classification pair models (e.g. FacebookAI/roberta-large-mnli).
+  // Try text_pair format first; if that 404s, fall back to RoBERTa's concatenated format.
   const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
-  const res = await fetch(url, {
+
+  const resPair = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      inputs: {
-        text,
-        text_pair: textPair,
-      },
-    }),
+    body: JSON.stringify({ inputs: { text, text_pair: textPair } }),
   })
 
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "")
-    throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
+  if (resPair.ok) return (await resPair.json()) as unknown
+
+  if (resPair.status !== 404) {
+    const msg = await resPair.text().catch(() => "")
+    throw new Error(`HuggingFace directional score failed (${resPair.status}): ${msg}`)
   }
-  return (await res.json()) as unknown
+
+  // 404 fallback: send as concatenated RoBERTa-style string "[premise] </s></s> [hypothesis]"
+  const resConcat = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ inputs: `${text} </s></s> ${textPair}` }),
+  })
+
+  if (!resConcat.ok) {
+    const msg = await resConcat.text().catch(() => "")
+    throw new Error(`HuggingFace directional score failed (${resConcat.status}): ${msg}`)
+  }
+  return (await resConcat.json()) as unknown
 }
 
 function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
@@ -274,7 +288,7 @@ function extractMsMarcoScore(json: unknown): number | null {
 
 export async function computeDirectionalScores(
   texts: string[],
-  provider: DirectionalProvider = { kind: "nli", model: "roberta-large-mnli" },
+  provider: DirectionalProvider = { kind: "nli", model: "FacebookAI/roberta-large-mnli" },
 ): Promise<TransitionMatrix> {
   const n = texts.length
   const matrix: TransitionMatrix = Array.from({ length: n }, () =>
@@ -862,7 +876,7 @@ export async function POST(request: NextRequest) {
     try {
       directionalMatrix = await computeDirectionalScores(texts, {
         kind: "nli",
-        model: "roberta-large-mnli",
+        model: "FacebookAI/roberta-large-mnli",
       })
       alpha = 0.4
       beta = 0.6

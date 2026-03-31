@@ -331,11 +331,11 @@ const matrix: MatrixConfig[] = [
   { id: 2, name: "OpenAI text-embedding-3-small (no direction)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "none" } },
   { id: 3, name: "HF all-mpnet-base-v2 (no direction)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "none" } },
   { id: 4, name: "HF BGE small (no direction)", embedding: { kind: "hf", model: "BAAI/bge-small-en-v1.5" }, directional: { kind: "none" } },
-  { id: 5, name: "OpenAI + roberta-mnli (0.4/0.6)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 6, name: "HF mpnet + roberta-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
+  { id: 5, name: "OpenAI + roberta-mnli (0.4/0.6)", embedding: { kind: "openai", model: "text-embedding-3-small" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
+  { id: 6, name: "HF mpnet + roberta-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
   { id: 7, name: "HF mpnet + bart-mnli (0.4/0.6)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "facebook/bart-large-mnli" }, weights: { alpha: 0.4, beta: 0.6 } },
-  { id: 8, name: "HF mpnet + roberta-mnli (0.5/0.5)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.5, beta: 0.5 } },
-  { id: 9, name: "HF mpnet + roberta-mnli (0.3/0.7)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "roberta-large-mnli" }, weights: { alpha: 0.3, beta: 0.7 } },
+  { id: 8, name: "HF mpnet + roberta-mnli (0.5/0.5)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.5, beta: 0.5 } },
+  { id: 9, name: "HF mpnet + roberta-mnli (0.3/0.7)", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, directional: { kind: "nli", model: "FacebookAI/roberta-large-mnli" }, weights: { alpha: 0.3, beta: 0.7 } },
 ]
 
 async function buildEmbeddingCosineMatrix(points: string[], cfg: MatrixConfig): Promise<TransitionMatrix> {
