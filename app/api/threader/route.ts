@@ -100,7 +100,8 @@ async function computeEmbeddingsHuggingFace(
   model: string,
 ): Promise<EmbeddingVector[]> {
   const apiKey = getHuggingFaceApiKey()
-  const url = `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}/pipeline/feature-extraction`
+  const encodedModel = model.split("/").map(encodeURIComponent).join("/")
+  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/feature-extraction`
 
   const vectors: EmbeddingVector[] = []
   for (const text of texts) {
@@ -162,7 +163,8 @@ async function huggingFacePairScore(
   textPair: string,
 ): Promise<unknown> {
   const apiKey = getHuggingFaceApiKey()
-  const url = `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}/pipeline/text-classification`
+  const encodedModel = model.split("/").map(encodeURIComponent).join("/")
+  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
 
   const res = await fetch(url, {
     method: "POST",
@@ -810,15 +812,30 @@ export async function POST(request: NextRequest) {
       model: "text-embedding-3-small",
     })
     const cosineMatrix = computeCosineMatrix(embeddings)
-    const directionalMatrix = await computeDirectionalScores(texts, {
-      kind: "nli",
-      model: "cross-encoder/nli-deberta-v3-base",
-    })
+
+    let directionalMatrix: TransitionMatrix
+    let alpha = 1.0
+    let beta = 0.0
+    try {
+      directionalMatrix = await computeDirectionalScores(texts, {
+        kind: "nli",
+        model: "cross-encoder/nli-deberta-v3-base",
+      })
+      alpha = 0.4
+      beta = 0.6
+    } catch {
+      // Cross-encoder not available on this inference tier; fall back to cosine-only
+      console.warn("Directional scoring unavailable, using cosine-only ordering")
+      directionalMatrix = Array.from({ length: texts.length }, () =>
+        new Array(texts.length).fill(0),
+      )
+    }
+
     const transitionMatrix = buildTransitionMatrix(
       cosineMatrix,
       directionalMatrix,
-      0.4,
-      0.6,
+      alpha,
+      beta,
     )
 
     // Step 3: Generate three orderings using different algorithms
