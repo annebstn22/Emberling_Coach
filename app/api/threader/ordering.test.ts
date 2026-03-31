@@ -392,27 +392,32 @@ describe("Threader ordering matrix evaluation", () => {
         continue
       }
 
-      const taus: number[] = []
-      for (const ex of gold) {
-        const cosOrBase = await buildEmbeddingCosineMatrix(ex.points, cfg)
-        if (cfg.directional.kind === "none") {
-          const predicted = bestOfThree(ex.points, cosOrBase)
+      try {
+        const taus: number[] = []
+        for (const ex of gold) {
+          const cosOrBase = await buildEmbeddingCosineMatrix(ex.points, cfg)
+          if (cfg.directional.kind === "none") {
+            const predicted = bestOfThree(ex.points, cosOrBase)
+            const tau = kendallsTau(ex.correctOrder, predicted)
+            taus.push(tau)
+            continue
+          }
+
+          const dir = await buildDirectionalMatrix(ex.points, cfg)
+          const w = cfg.weights ?? { alpha: 1, beta: 0 }
+          const combined = combineMatrices(cosOrBase, dir, w.alpha, w.beta)
+          const predicted = bestOfThree(ex.points, combined)
           const tau = kendallsTau(ex.correctOrder, predicted)
           taus.push(tau)
-          continue
         }
 
-        const dir = await buildDirectionalMatrix(ex.points, cfg)
-        const w = cfg.weights ?? { alpha: 1, beta: 0 }
-        const combined = combineMatrices(cosOrBase, dir, w.alpha, w.beta)
-        const predicted = bestOfThree(ex.points, combined)
-        const tau = kendallsTau(ex.correctOrder, predicted)
-        taus.push(tau)
+        const meanTau = taus.reduce((a, b) => a + b, 0) / taus.length
+        const meanAcc = pairwiseAccuracy(meanTau)
+        results.push({ id: cfg.id, name: cfg.name, ran: true, meanTau, meanAcc })
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        results.push({ id: cfg.id, name: cfg.name, ran: false, skippedBecause: [reason] })
       }
-
-      const meanTau = taus.reduce((a, b) => a + b, 0) / taus.length
-      const meanAcc = pairwiseAccuracy(meanTau)
-      results.push({ id: cfg.id, name: cfg.name, ran: true, meanTau, meanAcc })
     }
 
     // Provide a deterministic assertion: at least baseline should run
@@ -431,7 +436,10 @@ describe("Threader ordering matrix evaluation", () => {
     console.log("\n=== Threader Matrix Results ===")
     for (const r of results) {
       if (!r.ran) {
-        console.log(`#${r.id} SKIP ${r.name} (missing: ${r.skippedBecause?.join(", ")})`)
+        const label = r.skippedBecause?.some((s) => s.includes("KEY") || s.includes("OPENAI") || s.includes("HUGGING"))
+          ? "SKIP (missing key)"
+          : "SKIP (API error)"
+        console.log(`#${r.id} ${label} ${r.name} — ${r.skippedBecause?.join(" | ")}`)
       } else {
         console.log(`#${r.id} OK   ${r.name} | mean tau=${r.meanTau?.toFixed(3)} | mean acc=${r.meanAcc?.toFixed(3)}`)
       }
