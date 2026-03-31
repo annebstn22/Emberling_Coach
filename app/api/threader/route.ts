@@ -319,6 +319,91 @@ export async function computeDirectionalScores(
   return matrix
 }
 
+// ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
+// Maps each sentence to a narrative position [0,1]:
+//   0 = introduction/thesis   0.5 = body/continuation   1 = conclusion/consequence
+// The transition score A→B = sigmoid(5 * (posB − posA)):
+//   > 0.5 if B's discourse role is later than A's (correct ordering)
+//   < 0.5 if B should come before A (incorrect ordering)
+const DISCOURSE_MARKERS: Array<{ pattern: RegExp; position: number }> = [
+  // Introduction / thesis (0.1)
+  { pattern: /\b(i believe|i think|i want to|the question|to begin|at first|initially|i was|i felt|when i first|i joined|i started|i had|i used to)\b/i, position: 0.1 },
+  // Early illustration (0.3)
+  { pattern: /\b(for example|for instance|specifically|to illustrate|consider|such as|one example|take the case)\b/i, position: 0.3 },
+  // Mid continuation (0.5)
+  { pattern: /\b(also|additionally|furthermore|moreover|in addition|another|similarly|likewise|and then|and i)\b/i, position: 0.5 },
+  { pattern: /\b(then|next|after that|following this|after this)\b/i, position: 0.5 },
+  // Early temporal reference (0.2)
+  { pattern: /\b(before|previously|earlier|at the start|back when|at the time)\b/i, position: 0.2 },
+  // Later temporal (0.7)
+  { pattern: /\b(eventually|over time|by then|in time|after a while|soon after)\b/i, position: 0.7 },
+  // Contrast / pivot (0.6)
+  { pattern: /\b(however|but then|although|despite|on the other hand|in contrast|yet|nevertheless|while)\b/i, position: 0.6 },
+  // Realization / insight (0.65)
+  { pattern: /\b(i realized|i understood|i discovered|that reframed|that changed|i noticed|i learned that)\b/i, position: 0.65 },
+  // Causal consequence (0.75)
+  { pattern: /\b(therefore|thus|hence|as a result|consequently|because of this|this led|this caused|this meant|this helped|so i|which meant)\b/i, position: 0.75 },
+  // Conclusion / summary (0.9)
+  { pattern: /\b(in conclusion|in summary|to summarize|ultimately|to conclude|this is why|this shows|the lesson|what i learned|going forward|from now on|looking back|the takeaway)\b/i, position: 0.9 },
+  { pattern: /\b(finally|in the end|at the end|by the end|lastly|last of all)\b/i, position: 0.85 },
+]
+
+function discoursePositionScore(text: string): number {
+  const t = text.toLowerCase()
+  const matched: number[] = []
+  for (const { pattern, position } of DISCOURSE_MARKERS) {
+    if (pattern.test(t)) matched.push(position)
+  }
+  if (matched.length === 0) return 0.5
+  return matched.reduce((a, b) => a + b, 0) / matched.length
+}
+
+export function computeDiscourseMatrix(texts: string[]): TransitionMatrix {
+  const n = texts.length
+  const positions = texts.map(discoursePositionScore)
+  const matrix: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      // sigmoid(5 * Δposition): strong signal when discourse roles differ, neutral when same
+      matrix[i][j] = 1 / (1 + Math.exp(-5 * (positions[j] - positions[i])))
+    }
+  }
+  return matrix
+}
+
+// ─── LLM directional scoring (GPT-4o-mini, single batch call) ─────────────────
+// Asks the model to rate how naturally each fragment j follows fragment i in a
+// coherent essay or argument. One call per example; returns an n×n matrix.
+export async function computeLLMDirectionalScores(texts: string[]): Promise<TransitionMatrix> {
+  const n = texts.length
+  if (n === 0) return []
+  const openai = getOpenAIClient()
+
+  const fragmentsList = texts.map((t, i) => `[${i}]: "${t.replace(/"/g, "''")}"`).join("\n")
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    messages: [
+      {
+        role: "user",
+        content: `You are ordering text fragments for a writing coach app.\nFor each ordered pair (i→j), score 0.0–1.0: how naturally does fragment j follow fragment i in a coherent essay, argument, or narrative?\n  1.0 = j clearly and naturally continues from i\n  0.5 = neutral / could go either way\n  0.0 = j should definitely NOT follow i\n\nFragments:\n${fragmentsList}\n\nReturn ONLY a JSON ${n}×${n} matrix (array of arrays) where result[i][j] is the score for the pair (i→j). Set diagonal entries to 0. No explanation, no markdown.`,
+      },
+    ],
+  })
+
+  const raw = response.choices[0]?.message?.content ?? ""
+  const match = raw.match(/\[[\s\S]*\]/)
+  if (!match) throw new Error(`LLM directional score: could not parse JSON from response: ${raw.slice(0, 200)}`)
+
+  const parsed = JSON.parse(match[0]) as unknown
+  if (!Array.isArray(parsed) || parsed.length !== n) {
+    throw new Error(`LLM directional score: unexpected matrix shape (expected ${n}×${n})`)
+  }
+  return parsed as TransitionMatrix
+}
+
+// ─── Cosine similarity matrix from embeddings ─────────────────────────────────
 function computeCosineMatrix(embeddings: EmbeddingVector[]): TransitionMatrix {
   const n = embeddings.length
   const out: TransitionMatrix = Array.from({ length: n }, () =>
@@ -863,17 +948,17 @@ export async function POST(request: NextRequest) {
     const expandedPoints = await expandPoints(validPoints)
 
     // Step 2: Build transition matrix
-    // Evaluation (ordering.test.ts, 6 gold examples) showed:
-    //   Jaccard+length baseline          tau=0.333 (best)
-    //   HF cosine alone (all-mpnet)      tau=0.178
-    //   NLI directional (roberta/bart)   tau=-0.189 (wrong signal — entailment ≠ discourse flow)
-    //
-    // Strategy: try OpenAI embeddings (best pure semantic), blend 50/50 with Jaccard as a
-    // hedge (hybrid beats pure cosine in preliminary tests). If OpenAI key is absent,
-    // fall back to HF mpnet, then to Jaccard-only.
+    // Signals used (see ordering.test.ts for full evaluation):
+    //   - Jaccard+length: strongest single baseline (tau=0.333)
+    //   - OpenAI cosine: semantic similarity
+    //   - Discourse markers: rule-based, free, genuinely directional
+    //   - LLM directional: GPT-4o-mini asks "does B follow A?" (single batch call)
+    // Full combination is determined by test matrix results; until confirmed,
+    // we use Jaccard + LLM directional + cosine with equal weights, with
+    // graceful fallback at each level.
     const texts = expandedPoints.map((p) => p.expanded)
 
-    // Jaccard+length matrix (always available, currently the strongest single signal)
+    // Jaccard+length matrix (always available)
     const jaccardMatrix: TransitionMatrix = (() => {
       const n = texts.length
       const m: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
@@ -894,27 +979,55 @@ export async function POST(request: NextRequest) {
       return m
     })()
 
+    // Discourse matrix (always available — no API)
+    const discourseMatrix = computeDiscourseMatrix(texts)
+
     let transitionMatrix: TransitionMatrix
     try {
-      const embeddings = await computeEmbeddings(texts, {
-        kind: "openai",
-        model: "text-embedding-3-small",
-      })
+      // Run embeddings and LLM directional scoring in parallel
+      const [embeddings, llmMatrix] = await Promise.all([
+        computeEmbeddings(texts, { kind: "openai", model: "text-embedding-3-small" }),
+        computeLLMDirectionalScores(texts),
+      ])
       const cosineMatrix = computeCosineMatrix(embeddings)
-      // Blend: 50% Jaccard (proven strong) + 50% cosine (semantic richness)
-      transitionMatrix = buildTransitionMatrix(jaccardMatrix, cosineMatrix, 0.5, 0.5)
+      // Blend: Jaccard 0.35 + cosine 0.3 + LLM directional 0.35
+      const n = texts.length
+      transitionMatrix = Array.from({ length: n }, (_, i) =>
+        Array.from({ length: n }, (_, j) =>
+          i === j
+            ? 0
+            : 0.35 * (jaccardMatrix[i]?.[j] ?? 0) +
+              0.30 * ((cosineMatrix[i]?.[j] + 1) / 2) +
+              0.35 * (llmMatrix[i]?.[j] ?? 0),
+        ),
+      )
     } catch {
-      // No OpenAI key — try HF mpnet, then fall back to Jaccard alone
+      // OpenAI unavailable — use HF cosine + discourse markers
       try {
         const embeddings = await computeEmbeddings(texts, {
           kind: "huggingface",
           model: "sentence-transformers/all-mpnet-base-v2",
         })
         const cosineMatrix = computeCosineMatrix(embeddings)
-        transitionMatrix = buildTransitionMatrix(jaccardMatrix, cosineMatrix, 0.5, 0.5)
+        const n = texts.length
+        transitionMatrix = Array.from({ length: n }, (_, i) =>
+          Array.from({ length: n }, (_, j) =>
+            i === j
+              ? 0
+              : 0.45 * (jaccardMatrix[i]?.[j] ?? 0) +
+                0.30 * ((cosineMatrix[i]?.[j] + 1) / 2) +
+                0.25 * (discourseMatrix[i]?.[j] ?? 0),
+          ),
+        )
       } catch {
-        console.warn("Embedding APIs unavailable, using Jaccard+length ordering")
-        transitionMatrix = jaccardMatrix
+        // All APIs unavailable — Jaccard + discourse markers
+        console.warn("Embedding APIs unavailable, using Jaccard+discourse ordering")
+        const n = texts.length
+        transitionMatrix = Array.from({ length: n }, (_, i) =>
+          Array.from({ length: n }, (_, j) =>
+            i === j ? 0 : 0.7 * (jaccardMatrix[i]?.[j] ?? 0) + 0.3 * (discourseMatrix[i]?.[j] ?? 0),
+          ),
+        )
       }
     }
 

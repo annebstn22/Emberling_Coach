@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest"
 import {
   computeEmbeddings,
+  computeDiscourseMatrix,
+  computeLLMDirectionalScores,
   cosineSimilarity,
   type TransitionMatrix,
 } from "./route"
@@ -305,58 +307,91 @@ const gold: GoldExample[] = [
   },
 ]
 
-// MatrixConfig supports two kinds of rows:
-//   "pure"   – a single scoring signal run through bestOfThree
-//   "hybrid" – two pure signals combined at given weights (no extra API calls)
-//
-// NLI/directional rows were removed: all tested models (cross-encoder/nli-deberta-v3-base,
-// cross-encoder/ms-marco-MiniLM-L-6-v2, FacebookAI/roberta-large-mnli) are either not hosted
-// on the free HF inference tier (404) or actively degraded ordering when they did run
-// (bart-large-mnli: tau=-0.189 vs baseline tau=0.333). NLI entailment is the wrong signal
-// for narrative/argumentative ordering — it tests logical consequence, not discourse flow.
-type MatrixConfig = {
+// ─── Signal specification ──────────────────────────────────────────────────────
+// Each row in the matrix is a list of { spec, weight } pairs.
+// The final scoring matrix is a weighted sum of each signal's matrix.
+// This allows pure rows (1 signal) and blends (2-3 signals) with no code changes.
+
+type ScoringSpec =
+  | { kind: "jaccard" }                                           // lexical + length, no API
+  | { kind: "discourse" }                                         // rule-based discourse markers, no API
+  | { kind: "openai-embed"; model: "text-embedding-3-small" }    // cosine similarity
+  | { kind: "hf-embed"; model: string }                          // cosine similarity
+  | { kind: "llm-directional" }                                   // GPT-4o-mini pairwise "does B follow A?"
+
+type MatrixRow = {
   id: number
   name: string
-} & (
-  | {
-      kind: "pure"
-      embedding: { kind: "baseline" } | { kind: "openai"; model: "text-embedding-3-small" } | { kind: "hf"; model: string }
-    }
-  | {
-      kind: "hybrid"
-      embeddingA: { kind: "baseline" } | { kind: "hf"; model: string } | { kind: "openai"; model: "text-embedding-3-small" }
-      embeddingB: { kind: "hf"; model: string } | { kind: "openai"; model: "text-embedding-3-small" }
-      alphaA: number
-      alphaB: number
-    }
-)
+  signals: Array<{ spec: ScoringSpec; weight: number }>
+}
 
-// Rows 1–4: single-signal baselines
-// Rows 5–7: Jaccard+cosine hybrids — test whether mixing the winning baseline
-//           with semantic embeddings produces a better combined signal.
-//           No extra API calls: each hybrid reuses already-computed matrices.
-const matrix: MatrixConfig[] = [
-  { id: 1, kind: "pure", name: "Jaccard+length baseline", embedding: { kind: "baseline" } },
-  { id: 2, kind: "pure", name: "OpenAI text-embedding-3-small", embedding: { kind: "openai", model: "text-embedding-3-small" } },
-  { id: 3, kind: "pure", name: "HF all-mpnet-base-v2", embedding: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" } },
-  { id: 4, kind: "pure", name: "HF BGE small", embedding: { kind: "hf", model: "BAAI/bge-small-en-v1.5" } },
-  { id: 5, kind: "hybrid", name: "Jaccard(0.5) + mpnet(0.5)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.5, alphaB: 0.5 },
-  { id: 6, kind: "hybrid", name: "Jaccard(0.7) + mpnet(0.3)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.7, alphaB: 0.3 },
-  { id: 7, kind: "hybrid", name: "Jaccard(0.3) + mpnet(0.7)", embeddingA: { kind: "baseline" }, embeddingB: { kind: "hf", model: "sentence-transformers/all-mpnet-base-v2" }, alphaA: 0.3, alphaB: 0.7 },
+// ─── Matrix rows ───────────────────────────────────────────────────────────────
+// Rows 1–2  : pure baselines (no API)
+// Rows 3–5  : pure ML baselines (embeddings)
+// Row  6    : LLM directional alone — tests GPT-4o-mini as ordering judge
+// Rows 7–9  : Jaccard + cosine hybrids — does cosine add to the baseline?
+// Rows 10–11: Jaccard + discourse — does rule-based direction add to baseline?
+// Rows 12–13: Jaccard + LLM directional — the main hypothesis
+// Row  14   : triple blend Jaccard + cosine + LLM (the production candidate)
+const matrix: MatrixRow[] = [
+  // ── Pure baselines ──
+  { id: 1,  name: "Jaccard+length",
+    signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
+  { id: 2,  name: "Discourse markers",
+    signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
+  // ── Pure ML ──
+  { id: 3,  name: "OpenAI text-embedding-3-small",
+    signals: [{ spec: { kind: "openai-embed", model: "text-embedding-3-small" }, weight: 1 }] },
+  { id: 4,  name: "HF all-mpnet-base-v2",
+    signals: [{ spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 1 }] },
+  { id: 5,  name: "HF BGE small",
+    signals: [{ spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 1 }] },
+  // ── LLM directional alone ──
+  { id: 6,  name: "LLM directional (GPT-4o-mini)",
+    signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
+  // ── Jaccard + cosine hybrids ──
+  { id: 7,  name: "Jaccard(0.5) + mpnet(0.5)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.5 }] },
+  { id: 8,  name: "Jaccard(0.7) + mpnet(0.3)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.7 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.3 }] },
+  { id: 9,  name: "Jaccard(0.3) + mpnet(0.7)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.3 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.7 }] },
+  // ── Jaccard + discourse hybrids ──
+  { id: 10, name: "Jaccard(0.7) + discourse(0.3)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.7 }, { spec: { kind: "discourse" }, weight: 0.3 }] },
+  { id: 11, name: "Jaccard(0.5) + discourse(0.5)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "discourse" }, weight: 0.5 }] },
+  // ── Jaccard + LLM directional ──
+  { id: 12, name: "Jaccard(0.5) + LLM(0.5)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "llm-directional" }, weight: 0.5 }] },
+  { id: 13, name: "Jaccard(0.35) + LLM(0.65)",
+    signals: [{ spec: { kind: "jaccard" }, weight: 0.35 }, { spec: { kind: "llm-directional" }, weight: 0.65 }] },
+  // ── Triple blend (production candidate) ──
+  { id: 14, name: "Jaccard(0.35) + mpnet(0.3) + LLM(0.35)",
+    signals: [
+      { spec: { kind: "jaccard" }, weight: 0.35 },
+      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.30 },
+      { spec: { kind: "llm-directional" }, weight: 0.35 },
+    ] },
 ]
 
-type EmbeddingSpec =
-  | { kind: "baseline" }
-  | { kind: "openai"; model: "text-embedding-3-small" }
-  | { kind: "hf"; model: string }
-
-async function buildPureMatrix(points: string[], spec: EmbeddingSpec): Promise<TransitionMatrix> {
-  if (spec.kind === "baseline") {
+// ─── Build a single signal's scoring matrix ────────────────────────────────────
+async function buildSignalMatrix(points: string[], spec: ScoringSpec): Promise<TransitionMatrix> {
+  if (spec.kind === "jaccard") {
     return buildMatrixFromScore(points, jaccardPlusLengthScore)
   }
 
+  if (spec.kind === "discourse") {
+    return computeDiscourseMatrix(points)
+  }
+
+  if (spec.kind === "llm-directional") {
+    return computeLLMDirectionalScores(points)
+  }
+
+  // Cosine embedding signals
   const embeddings =
-    spec.kind === "openai"
+    spec.kind === "openai-embed"
       ? await computeEmbeddings(points, { kind: "openai", model: spec.model })
       : await computeEmbeddings(points, { kind: "huggingface", model: spec.model })
 
@@ -365,29 +400,41 @@ async function buildPureMatrix(points: string[], spec: EmbeddingSpec): Promise<T
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (i === j) continue
-      const cos = cosineSimilarity(embeddings[i], embeddings[j])
-      m[i][j] = (cos + 1) / 2
+      m[i][j] = (cosineSimilarity(embeddings[i], embeddings[j]) + 1) / 2
     }
   }
   return m
 }
 
-function requiredEnvFor(cfg: MatrixConfig): string[] {
-  const vars: string[] = []
-  if (cfg.kind === "pure") {
-    if (cfg.embedding.kind === "openai") vars.push("OPENAI_API_KEY")
-    if (cfg.embedding.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
-  } else {
-    if (cfg.embeddingA.kind === "openai") vars.push("OPENAI_API_KEY")
-    if (cfg.embeddingA.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
-    if (cfg.embeddingB.kind === "openai") vars.push("OPENAI_API_KEY")
-    if (cfg.embeddingB.kind === "hf") vars.push("HUGGINGFACE_API_KEY")
+// ─── Determine which env vars each row needs ───────────────────────────────────
+function requiredEnvFor(row: MatrixRow): string[] {
+  const vars = new Set<string>()
+  for (const { spec } of row.signals) {
+    if (spec.kind === "openai-embed" || spec.kind === "llm-directional") vars.add("OPENAI_API_KEY")
+    if (spec.kind === "hf-embed") vars.add("HUGGINGFACE_API_KEY")
   }
-  return [...new Set(vars)]
+  return [...vars]
+}
+
+// ─── Weighted blend of multiple signal matrices ────────────────────────────────
+function blendMatrices(mats: TransitionMatrix[], weights: number[]): TransitionMatrix {
+  const n = mats[0]?.length ?? 0
+  const total = weights.reduce((a, b) => a + b, 0)
+  const out: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let s = 0; s < mats.length; s++) {
+    const w = (weights[s] ?? 0) / total
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue
+        out[i][j] += w * (mats[s][i]?.[j] ?? 0)
+      }
+    }
+  }
+  return out
 }
 
 describe("Threader ordering matrix evaluation", () => {
-  it("runs the 7-row matrix (skips rows missing API keys)", async () => {
+  it("runs the full matrix (skips rows missing API keys)", async () => {
     const results: Array<{
       id: number
       name: string
@@ -397,45 +444,41 @@ describe("Threader ordering matrix evaluation", () => {
       skippedBecause?: string[]
     }> = []
 
-    for (const cfg of matrix) {
-      const required = requiredEnvFor(cfg)
+    for (const row of matrix) {
+      const required = requiredEnvFor(row)
       const missing = required.filter((v) => !process.env[v])
       if (missing.length > 0) {
-        results.push({ id: cfg.id, name: cfg.name, ran: false, skippedBecause: missing })
+        results.push({ id: row.id, name: row.name, ran: false, skippedBecause: missing })
         continue
       }
 
       try {
         const taus: number[] = []
-        for (const ex of gold) {
-          let scoringMatrix: TransitionMatrix
 
-          if (cfg.kind === "pure") {
-            scoringMatrix = await buildPureMatrix(ex.points, cfg.embedding)
-          } else {
-            const matA = await buildPureMatrix(ex.points, cfg.embeddingA)
-            const matB = await buildPureMatrix(ex.points, cfg.embeddingB)
-            scoringMatrix = combineMatrices(matA, matB, cfg.alphaA, cfg.alphaB)
-          }
+        for (const ex of gold) {
+          // Build each signal's matrix (in parallel within a row)
+          const signalMats = await Promise.all(
+            row.signals.map(({ spec }) => buildSignalMatrix(ex.points, spec)),
+          )
+          const weights = row.signals.map(({ weight }) => weight)
+          const scoringMatrix = blendMatrices(signalMats, weights)
 
           const predicted = bestOfThree(ex.points, scoringMatrix)
-          const tau = kendallsTau(ex.correctOrder, predicted)
-          taus.push(tau)
+          taus.push(kendallsTau(ex.correctOrder, predicted))
         }
 
         const meanTau = taus.reduce((a, b) => a + b, 0) / taus.length
-        const meanAcc = pairwiseAccuracy(meanTau)
-        results.push({ id: cfg.id, name: cfg.name, ran: true, meanTau, meanAcc })
+        results.push({ id: row.id, name: row.name, ran: true, meanTau, meanAcc: pairwiseAccuracy(meanTau) })
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err)
-        results.push({ id: cfg.id, name: cfg.name, ran: false, skippedBecause: [reason] })
+        results.push({ id: row.id, name: row.name, ran: false, skippedBecause: [reason] })
       }
     }
 
-    // Provide a deterministic assertion: at least baseline should run
+    // Baseline must always run
     expect(results.find((r) => r.id === 1)?.ran).toBe(true)
 
-    // If any rows ran, ensure scores are within bounds
+    // Bounds check on any row that ran
     for (const r of results) {
       if (!r.ran) continue
       expect(r.meanTau).toBeGreaterThanOrEqual(-1)
@@ -444,19 +487,16 @@ describe("Threader ordering matrix evaluation", () => {
       expect(r.meanAcc).toBeLessThanOrEqual(1)
     }
 
-    // Print summary for local decision-making
     console.log("\n=== Threader Matrix Results ===")
     for (const r of results) {
       if (!r.ran) {
-        const label = r.skippedBecause?.some((s) => s.includes("KEY") || s.includes("OPENAI") || s.includes("HUGGING"))
-          ? "SKIP (missing key)"
-          : "SKIP (API error)"
-        console.log(`#${r.id} ${label} ${r.name} — ${r.skippedBecause?.join(" | ")}`)
+        const isMissingKey = r.skippedBecause?.some((s) => s.includes("_API_KEY"))
+        console.log(`#${String(r.id).padStart(2)} ${isMissingKey ? "SKIP (no key)  " : "SKIP (API err) "} ${r.name} — ${r.skippedBecause?.join(" | ")}`)
       } else {
-        console.log(`#${r.id} OK   ${r.name} | mean tau=${r.meanTau?.toFixed(3)} | mean acc=${r.meanAcc?.toFixed(3)}`)
+        console.log(`#${String(r.id).padStart(2)} OK             ${r.name} | tau=${r.meanTau?.toFixed(3)} | acc=${r.meanAcc?.toFixed(3)}`)
       }
     }
     console.log("==============================\n")
-  }, 120_000)
+  }, 180_000)
 })
 
