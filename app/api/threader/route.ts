@@ -100,7 +100,7 @@ async function computeEmbeddingsHuggingFace(
   model: string,
 ): Promise<EmbeddingVector[]> {
   const apiKey = getHuggingFaceApiKey()
-  const url = `https://api-inference.huggingface.co/pipeline/feature-extraction/${encodeURIComponent(model)}`
+  const url = `https://router.huggingface.co/hf-inference/pipeline/feature-extraction/${encodeURIComponent(model)}`
 
   const vectors: EmbeddingVector[] = []
   for (const text of texts) {
@@ -162,7 +162,7 @@ async function huggingFacePairScore(
   textPair: string,
 ): Promise<unknown> {
   const apiKey = getHuggingFaceApiKey()
-  const url = `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`
+  const url = `https://router.huggingface.co/hf-inference/models/${encodeURIComponent(model)}`
 
   const res = await fetch(url, {
     method: "POST",
