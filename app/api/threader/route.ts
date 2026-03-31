@@ -1,5 +1,6 @@
 import { generateText } from "ai"
 import { type NextRequest, NextResponse } from "next/server"
+import OpenAI from "openai"
 
 interface OrderingResult {
   method: string
@@ -16,6 +17,285 @@ interface ExpandedPoint {
   original: string
   expanded: string
   index: number
+}
+
+export type EmbeddingVector = number[]
+export type TransitionMatrix = number[][]
+
+type EmbeddingProvider =
+  | { kind: "openai"; model: "text-embedding-3-small" }
+  | { kind: "huggingface"; model: string }
+
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY for embeddings")
+  }
+  return new OpenAI({ apiKey })
+}
+
+function getHuggingFaceApiKey(): string {
+  const apiKey = process.env.HUGGINGFACE_API_KEY
+  if (!apiKey) {
+    throw new Error("Missing HUGGINGFACE_API_KEY")
+  }
+  return apiKey
+}
+
+export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
+  if (a.length !== b.length) {
+    throw new Error(`Embedding length mismatch: ${a.length} vs ${b.length}`)
+  }
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i]
+    const bi = b[i]
+    dot += ai * bi
+    normA += ai * ai
+    normB += bi * bi
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  if (!Number.isFinite(denom) || denom === 0) return 0
+  const cos = dot / denom
+  // Numerical guard: should be [-1, 1], but clamp anyway
+  if (cos > 1) return 1
+  if (cos < -1) return -1
+  return cos
+}
+
+function meanPoolTokenEmbeddings(tokenEmbeddings: number[][]): number[] {
+  if (tokenEmbeddings.length === 0) return []
+  const dim = tokenEmbeddings[0]?.length ?? 0
+  const out = new Array(dim).fill(0)
+  for (const tokenVec of tokenEmbeddings) {
+    for (let d = 0; d < dim; d++) out[d] += tokenVec[d] ?? 0
+  }
+  for (let d = 0; d < dim; d++) out[d] /= tokenEmbeddings.length
+  return out
+}
+
+function normalizeVectorL2(vec: number[]): number[] {
+  let sumSq = 0
+  for (const v of vec) sumSq += v * v
+  const denom = Math.sqrt(sumSq)
+  if (!Number.isFinite(denom) || denom === 0) return vec
+  return vec.map((v) => v / denom)
+}
+
+async function computeEmbeddingsOpenAI(texts: string[]): Promise<EmbeddingVector[]> {
+  const openai = getOpenAIClient()
+  const resp = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
+  })
+  return resp.data
+    .sort((a, b) => a.index - b.index)
+    .map((d) => d.embedding as number[])
+}
+
+async function computeEmbeddingsHuggingFace(
+  texts: string[],
+  model: string,
+): Promise<EmbeddingVector[]> {
+  const apiKey = getHuggingFaceApiKey()
+  const url = `https://api-inference.huggingface.co/pipeline/feature-extraction/${encodeURIComponent(model)}`
+
+  const vectors: EmbeddingVector[] = []
+  for (const text of texts) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: text }),
+    })
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "")
+      throw new Error(`HuggingFace embeddings failed (${res.status}): ${msg}`)
+    }
+
+    const json = (await res.json()) as unknown
+    // HF feature extraction can return:
+    // - number[] (already pooled)
+    // - number[][] (token embeddings)
+    if (Array.isArray(json) && typeof json[0] === "number") {
+      vectors.push(normalizeVectorL2(json as number[]))
+    } else if (Array.isArray(json) && Array.isArray(json[0])) {
+      const pooled = meanPoolTokenEmbeddings(json as number[][])
+      vectors.push(normalizeVectorL2(pooled))
+    } else {
+      throw new Error("Unexpected HuggingFace embeddings response shape")
+    }
+  }
+  return vectors
+}
+
+export async function computeEmbeddings(
+  texts: string[],
+  provider: EmbeddingProvider = { kind: "openai", model: "text-embedding-3-small" },
+): Promise<EmbeddingVector[]> {
+  if (texts.length === 0) return []
+  if (provider.kind === "openai") return computeEmbeddingsOpenAI(texts)
+  return computeEmbeddingsHuggingFace(texts, provider.model)
+}
+
+type DirectionalProvider =
+  | { kind: "nli"; model: "cross-encoder/nli-deberta-v3-base" }
+  | { kind: "msmarco"; model: "cross-encoder/ms-marco-MiniLM-L-6-v2" }
+
+function softmax(logits: number[]): number[] {
+  if (logits.length === 0) return []
+  const max = Math.max(...logits)
+  const exps = logits.map((v) => Math.exp(v - max))
+  const sum = exps.reduce((a, b) => a + b, 0)
+  if (sum === 0) return logits.map(() => 0)
+  return exps.map((v) => v / sum)
+}
+
+async function huggingFacePairScore(
+  model: string,
+  text: string,
+  textPair: string,
+): Promise<unknown> {
+  const apiKey = getHuggingFaceApiKey()
+  const url = `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      inputs: {
+        text,
+        text_pair: textPair,
+      },
+    }),
+  })
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
+  }
+  return (await res.json()) as unknown
+}
+
+function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
+  // Common HF text-classification return: [{label, score}, ...]
+  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
+    const items = json as Array<{ label?: string; score?: number }>
+    const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
+    if (entail && typeof entail.score === "number") return entail.score
+  }
+
+  // Some pipelines return raw logits: [contradiction, neutral, entailment]
+  if (Array.isArray(json) && json.length === 3 && json.every((x) => typeof x === "number")) {
+    const probs = softmax(json as number[])
+    return probs[2] ?? null
+  }
+
+  // Some endpoints return nested: [{sequence, labels, scores}]
+  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
+    const first = json[0] as any
+    if (Array.isArray(first?.labels) && Array.isArray(first?.scores)) {
+      const labels: unknown[] = first.labels
+      const scores: unknown[] = first.scores
+      const idx = labels.findIndex((l) =>
+        String(l).toLowerCase().includes("entail"),
+      )
+      const s = scores[idx]
+      if (typeof s === "number") return s
+    }
+  }
+
+  return null
+}
+
+function extractMsMarcoScore(json: unknown): number | null {
+  // Often: [{label: "LABEL_0", score: 0.123}] (score is fine as-is)
+  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
+    const item = json[0] as any
+    if (typeof item?.score === "number") return item.score
+  }
+  // Sometimes: just a number
+  if (typeof json === "number") return json
+  return null
+}
+
+export async function computeDirectionalScores(
+  texts: string[],
+  provider: DirectionalProvider = { kind: "nli", model: "cross-encoder/nli-deberta-v3-base" },
+): Promise<TransitionMatrix> {
+  const n = texts.length
+  const matrix: TransitionMatrix = Array.from({ length: n }, () =>
+    new Array(n).fill(0),
+  )
+  if (n === 0) return matrix
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      const json = await huggingFacePairScore(provider.model, texts[i], texts[j])
+      if (provider.kind === "nli") {
+        const score = extractEntailmentScoreFromNliResponse(json)
+        if (score == null) {
+          throw new Error("Unexpected NLI response shape from HuggingFace")
+        }
+        matrix[i][j] = score
+      } else {
+        const score = extractMsMarcoScore(json)
+        if (score == null) {
+          throw new Error("Unexpected MS MARCO response shape from HuggingFace")
+        }
+        matrix[i][j] = score
+      }
+    }
+  }
+
+  return matrix
+}
+
+function computeCosineMatrix(embeddings: EmbeddingVector[]): TransitionMatrix {
+  const n = embeddings.length
+  const out: TransitionMatrix = Array.from({ length: n }, () =>
+    new Array(n).fill(0),
+  )
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      out[i][j] = cosineSimilarity(embeddings[i], embeddings[j])
+    }
+  }
+  return out
+}
+
+export function buildTransitionMatrix(
+  cosineMatrix: TransitionMatrix,
+  directionalMatrix: TransitionMatrix,
+  alpha: number,
+  beta: number,
+): TransitionMatrix {
+  const n = cosineMatrix.length
+  const out: TransitionMatrix = Array.from({ length: n }, () =>
+    new Array(n).fill(0),
+  )
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      // Map cosine [-1, 1] → [0, 1] so it composes cleanly with probabilities
+      const cos01 = (cosineMatrix[i][j] + 1) / 2
+      const dir01 = directionalMatrix[i]?.[j] ?? 0
+      out[i][j] = alpha * cos01 + beta * dir01
+    }
+  }
+
+  return out
 }
 
 // Semantic expansion using LLM (like IdeaExpander from Hex notebook)
@@ -179,35 +459,11 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
   }
 }
 
-// Calculate semantic similarity using embeddings
-// For now, using lexical + length similarity as placeholder
-// TODO: Replace with actual embeddings (OpenAI embeddings API or @xenova/transformers)
-function calculateTransitionScore(
-  point1: ExpandedPoint,
-  point2: ExpandedPoint,
-): number {
-  // Use expanded text for better semantic matching
-  const text1 = point1.expanded.toLowerCase()
-  const text2 = point2.expanded.toLowerCase()
-
-  // Lexical overlap
-  const words1 = new Set(text1.split(/\s+/))
-  const words2 = new Set(text2.split(/\s+/))
-  const intersection = new Set([...words1].filter((x) => words2.has(x)))
-  const union = new Set([...words1, ...words2])
-  const lexicalScore = union.size > 0 ? intersection.size / union.size : 0
-
-  // Length similarity
-  const len1 = text1.length
-  const len2 = text2.length
-  const lengthScore = 1 - Math.abs(len1 - len2) / Math.max(len1, len2, 1)
-
-  // Combined score (will be replaced with cosine similarity of embeddings)
-  return 0.5 * lexicalScore + 0.5 * lengthScore
-}
-
 // Greedy algorithm: always pick best next transition
-function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
+function greedyOrdering(
+  expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
+): OrderingResult {
   if (expandedPoints.length <= 1) {
     return {
       method: "Greedy Search",
@@ -234,10 +490,7 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
     let bestScore = -1
 
     for (const nextIdx of remaining) {
-      const score = calculateTransitionScore(
-        expandedPoints[current],
-        expandedPoints[nextIdx],
-      )
+      const score = transitionMatrix[current]?.[nextIdx] ?? 0
       if (score > bestScore) {
         bestScore = score
         bestNext = nextIdx
@@ -249,18 +502,17 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
       remaining.delete(bestNext)
     } else {
       // Fallback: add any remaining
-      path.push(remaining.values().next().value)
-      remaining.delete(path[path.length - 1])
+      const fallback = remaining.values().next().value as number | undefined
+      if (fallback == null) break
+      path.push(fallback)
+      remaining.delete(fallback)
     }
   }
 
   // Calculate average transition score
   let totalScore = 0
   for (let i = 0; i < path.length - 1; i++) {
-    totalScore += calculateTransitionScore(
-      expandedPoints[path[i]],
-      expandedPoints[path[i + 1]],
-    )
+    totalScore += transitionMatrix[path[i]]?.[path[i + 1]] ?? 0
   }
   const avgScore = path.length > 1 ? totalScore / (path.length - 1) : 1.0
 
@@ -275,6 +527,7 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
 // Simulated annealing for better optimization
 function simulatedAnnealingOrdering(
   expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
   maxIterations = 1000,
 ): OrderingResult {
   if (expandedPoints.length <= 1) {
@@ -295,10 +548,7 @@ function simulatedAnnealingOrdering(
 
   let currentScore = 0
   for (let i = 0; i < currentPath.length - 1; i++) {
-    currentScore += calculateTransitionScore(
-      expandedPoints[currentPath[i]],
-      expandedPoints[currentPath[i + 1]],
-    )
+    currentScore += transitionMatrix[currentPath[i]]?.[currentPath[i + 1]] ?? 0
   }
   currentScore =
     currentPath.length > 1 ? currentScore / (currentPath.length - 1) : 1.0
@@ -319,10 +569,7 @@ function simulatedAnnealingOrdering(
     // Calculate new score
     let newScore = 0
     for (let k = 0; k < newPath.length - 1; k++) {
-      newScore += calculateTransitionScore(
-        expandedPoints[newPath[k]],
-        expandedPoints[newPath[k + 1]],
-      )
+      newScore += transitionMatrix[newPath[k]]?.[newPath[k + 1]] ?? 0
     }
     newScore = newPath.length > 1 ? newScore / (newPath.length - 1) : 1.0
 
@@ -352,6 +599,7 @@ function simulatedAnnealingOrdering(
 // Genetic algorithm
 function geneticAlgorithmOrdering(
   expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
   populationSize = 30,
   generations = 50,
 ): OrderingResult {
@@ -379,10 +627,7 @@ function geneticAlgorithmOrdering(
   const fitness = (path: number[]): number => {
     let score = 0
     for (let i = 0; i < path.length - 1; i++) {
-      score += calculateTransitionScore(
-        expandedPoints[path[i]],
-        expandedPoints[path[i + 1]],
-      )
+      score += transitionMatrix[path[i]]?.[path[i + 1]] ?? 0
     }
     return path.length > 1 ? score / (path.length - 1) : 1.0
   }
@@ -558,17 +803,35 @@ export async function POST(request: NextRequest) {
     // Step 1: Expand all points semantically
     const expandedPoints = await expandPoints(validPoints)
 
-    // Step 2: Generate three orderings using different algorithms
+    // Step 2: Build transition matrix (cosine similarity + directional score)
+    const texts = expandedPoints.map((p) => p.expanded)
+    const embeddings = await computeEmbeddings(texts, {
+      kind: "openai",
+      model: "text-embedding-3-small",
+    })
+    const cosineMatrix = computeCosineMatrix(embeddings)
+    const directionalMatrix = await computeDirectionalScores(texts, {
+      kind: "nli",
+      model: "cross-encoder/nli-deberta-v3-base",
+    })
+    const transitionMatrix = buildTransitionMatrix(
+      cosineMatrix,
+      directionalMatrix,
+      0.4,
+      0.6,
+    )
+
+    // Step 3: Generate three orderings using different algorithms
     const orderings: OrderingResult[] = [
-      greedyOrdering(expandedPoints),
-      simulatedAnnealingOrdering(expandedPoints),
-      geneticAlgorithmOrdering(expandedPoints),
+      greedyOrdering(expandedPoints, transitionMatrix),
+      simulatedAnnealingOrdering(expandedPoints, transitionMatrix),
+      geneticAlgorithmOrdering(expandedPoints, transitionMatrix),
     ]
 
     // Sort by score (best first)
     orderings.sort((a, b) => b.score - a.score)
 
-    // Step 3: Generate bridge text for the best ordering
+    // Step 4: Generate bridge text for the best ordering
     const bestOrdering = orderings[0]
     const bridges: string[] = []
 
