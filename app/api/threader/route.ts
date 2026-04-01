@@ -1,4 +1,5 @@
-import { generateText } from "ai"
+import { embedMany, generateText } from "ai"
+import { google } from "@ai-sdk/google"
 import { type NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
 
@@ -25,6 +26,7 @@ export type TransitionMatrix = number[][]
 type EmbeddingProvider =
   | { kind: "openai"; model: "text-embedding-3-small" }
   | { kind: "huggingface"; model: string }
+  | { kind: "google"; model: "text-embedding-004" }
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY
@@ -135,12 +137,22 @@ async function computeEmbeddingsHuggingFace(
   return vectors
 }
 
+async function computeEmbeddingsGoogle(texts: string[]): Promise<EmbeddingVector[]> {
+  if (texts.length === 0) return []
+  const { embeddings } = await embedMany({
+    model: google.textEmbeddingModel("text-embedding-004"),
+    values: texts,
+  })
+  return embeddings.map((e) => [...e])
+}
+
 export async function computeEmbeddings(
   texts: string[],
   provider: EmbeddingProvider = { kind: "openai", model: "text-embedding-3-small" },
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return []
   if (provider.kind === "openai") return computeEmbeddingsOpenAI(texts)
+  if (provider.kind === "google") return computeEmbeddingsGoogle(texts)
   return computeEmbeddingsHuggingFace(texts, provider.model)
 }
 
@@ -161,6 +173,19 @@ function softmax(logits: number[]): number[] {
 // and input format than standard text-classification pair models.
 const ZERO_SHOT_NLI_MODELS = new Set(["facebook/bart-large-mnli"])
 
+// Small MNLI / cross-encoder models: use narrative-framed hypothesis (order plausibility).
+export const THREADER_NARRATIVE_NLI_MODELS = [
+  "typeform/distilbert-base-uncased-mnli",
+  "cross-encoder/nli-MiniLM2-L6-H768",
+  "MoritzLaurer/deberta-v3-small-mnli-fever-docnli-ling-2c",
+] as const
+
+const NARRATIVE_NLI_MODELS = new Set<string>(THREADER_NARRATIVE_NLI_MODELS)
+
+function narrativeHypothesisForPair(nextFragment: string): string {
+  return `The next point in this personal narrative is: ${nextFragment}`
+}
+
 async function huggingFacePairScore(
   model: string,
   text: string,
@@ -168,6 +193,9 @@ async function huggingFacePairScore(
 ): Promise<unknown> {
   const apiKey = getHuggingFaceApiKey()
   const encodedModel = model.split("/").map(encodeURIComponent).join("/")
+  const hypothesis = NARRATIVE_NLI_MODELS.has(model)
+    ? narrativeHypothesisForPair(textPair)
+    : textPair
 
   if (ZERO_SHOT_NLI_MODELS.has(model)) {
     // bart-large-mnli: zero-shot-classification pipeline.
@@ -204,7 +232,7 @@ async function huggingFacePairScore(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ inputs: { text, text_pair: textPair } }),
+    body: JSON.stringify({ inputs: { text, text_pair: hypothesis } }),
   })
 
   if (resPair.ok) return (await resPair.json()) as unknown
@@ -221,7 +249,7 @@ async function huggingFacePairScore(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ inputs: `${text} </s></s> ${textPair}` }),
+    body: JSON.stringify({ inputs: `${text} </s></s> ${hypothesis}` }),
   })
 
   if (!resConcat.ok) {
@@ -239,6 +267,8 @@ function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
     if (typeof (items[0] as any)?.label === "string") {
       const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
       if (entail && typeof entail.score === "number") return entail.score
+      // Some cross-encoders return a single regression-style score
+      if (items.length === 1 && typeof items[0]?.score === "number") return items[0].score
     }
   }
 
@@ -319,6 +349,19 @@ export async function computeDirectionalScores(
   return matrix
 }
 
+/** Try narrative-framed NLI models in order until one succeeds (HF Inference). */
+export async function computeNarrativeNLIMatrix(texts: string[]): Promise<TransitionMatrix> {
+  let lastErr: Error | null = null
+  for (const model of THREADER_NARRATIVE_NLI_MODELS) {
+    try {
+      return await computeDirectionalScores(texts, { kind: "nli", model })
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e))
+    }
+  }
+  throw lastErr ?? new Error("All narrative NLI models failed")
+}
+
 // ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
 // Maps each sentence to a narrative position [0,1]:
 //   0 = introduction/thesis   0.5 = body/continuation   1 = conclusion/consequence
@@ -372,27 +415,28 @@ export function computeDiscourseMatrix(texts: string[]): TransitionMatrix {
   return matrix
 }
 
-// ─── LLM directional scoring (GPT-4o-mini, single batch call) ─────────────────
-// Asks the model to rate how naturally each fragment j follows fragment i in a
-// coherent essay or argument. One call per example; returns an n×n matrix.
+// ─── LLM directional scoring (GPT-4o-mini, single batch call, Vercel AI Gateway) ─
+// Uses generateText + "openai/gpt-4o-mini" like expandPoints — no OPENAI_API_KEY required on Vercel.
 export async function computeLLMDirectionalScores(texts: string[]): Promise<TransitionMatrix> {
   const n = texts.length
   if (n === 0) return []
-  const openai = getOpenAIClient()
 
   const fragmentsList = texts.map((t, i) => `[${i}]: "${t.replace(/"/g, "''")}"`).join("\n")
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+  const { text: raw } = await generateText({
+    model: "openai/gpt-4o-mini",
     temperature: 0,
-    messages: [
-      {
-        role: "user",
-        content: `You are ordering text fragments for a writing coach app.\nFor each ordered pair (i→j), score 0.0–1.0: how naturally does fragment j follow fragment i in a coherent essay, argument, or narrative?\n  1.0 = j clearly and naturally continues from i\n  0.5 = neutral / could go either way\n  0.0 = j should definitely NOT follow i\n\nFragments:\n${fragmentsList}\n\nReturn ONLY a JSON ${n}×${n} matrix (array of arrays) where result[i][j] is the score for the pair (i→j). Set diagonal entries to 0. No explanation, no markdown.`,
-      },
-    ],
-  })
+    prompt: `You are helping the Threader tool order user-supplied bullet points. The points might be diverse life experiences with hidden connecting themes (e.g. competitive diving and learning Korean both involve fear of performance and mastery through repetition).
 
-  const raw = response.choices[0]?.message?.content ?? ""
+For each ordered pair (i→j), score 0.0–1.0: how well does j follow i to reveal an insight, deepen a theme, or build emotional progression? Score higher when j echoes or builds on a latent theme introduced in i.
+  1.0 = j clearly continues or deepens the thread from i
+  0.5 = neutral / could go either way
+  0.0 = j should definitely NOT follow i
+
+Fragments:
+${fragmentsList}
+
+Return ONLY a JSON ${n}×${n} matrix (array of arrays) where result[i][j] is the score for the pair (i→j). Set diagonal entries to 0. No explanation, no markdown.`,
+  })
   const match = raw.match(/\[[\s\S]*\]/)
   if (!match) throw new Error(`LLM directional score: could not parse JSON from response: ${raw.slice(0, 200)}`)
 
@@ -400,7 +444,21 @@ export async function computeLLMDirectionalScores(texts: string[]): Promise<Tran
   if (!Array.isArray(parsed) || parsed.length !== n) {
     throw new Error(`LLM directional score: unexpected matrix shape (expected ${n}×${n})`)
   }
-  return parsed as TransitionMatrix
+  const mat = parsed as TransitionMatrix
+  for (let i = 0; i < n; i++) {
+    const row = mat[i]
+    if (!Array.isArray(row) || row.length !== n) {
+      throw new Error(`LLM directional score: bad row ${i}`)
+    }
+    for (let j = 0; j < n; j++) {
+      const v = row[j]
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        throw new Error(`LLM directional score: non-numeric at [${i}][${j}]`)
+      }
+      if (i === j) mat[i][j] = 0
+    }
+  }
+  return mat
 }
 
 // ─── Cosine similarity matrix from embeddings ─────────────────────────────────
@@ -439,6 +497,50 @@ export function buildTransitionMatrix(
     }
   }
 
+  return out
+}
+
+/** Weighted blend: discourse (rules) + NLI directional + raw cosine [-1,1] → [0,1]. */
+function blendThreeTransitionMatrices(
+  discourse: TransitionMatrix,
+  nli: TransitionMatrix,
+  cosRaw: TransitionMatrix,
+  wDisc: number,
+  wNli: number,
+  wEnc: number,
+): TransitionMatrix {
+  const n = discourse.length
+  const t = wDisc + wNli + wEnc
+  const out: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      out[i][j] =
+        (wDisc * (discourse[i]?.[j] ?? 0) +
+          wNli * (nli[i]?.[j] ?? 0) +
+          wEnc * (((cosRaw[i]?.[j] ?? 0) + 1) / 2)) /
+        t
+    }
+  }
+  return out
+}
+
+function blendDiscourseEncoder(
+  discourse: TransitionMatrix,
+  cosRaw: TransitionMatrix,
+  wDisc: number,
+  wEnc: number,
+): TransitionMatrix {
+  const n = discourse.length
+  const t = wDisc + wEnc
+  const out: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      out[i][j] =
+        (wDisc * (discourse[i]?.[j] ?? 0) + wEnc * (((cosRaw[i]?.[j] ?? 0) + 1) / 2)) / t
+    }
+  }
   return out
 }
 
@@ -948,86 +1050,59 @@ export async function POST(request: NextRequest) {
     const expandedPoints = await expandPoints(validPoints)
 
     // Step 2: Build transition matrix
-    // Signals used (see ordering.test.ts for full evaluation):
-    //   - Jaccard+length: strongest single baseline (tau=0.333)
-    //   - OpenAI cosine: semantic similarity
-    //   - Discourse markers: rule-based, free, genuinely directional
-    //   - LLM directional: GPT-4o-mini asks "does B follow A?" (single batch call)
-    // Full combination is determined by test matrix results; until confirmed,
-    // we use Jaccard + LLM directional + cosine with equal weights, with
-    // graceful fallback at each level.
+    // Default (class-defensible): discourse (low) + HF narrative NLI + encoder cosine (symmetric semantics).
+    // Fallbacks: discourse + encoder only; then OpenAI encoder + discourse; then discourse alone.
+    // No Jaccard on the hot path (see ordering.test.ts matrix for control benchmarks).
     const texts = expandedPoints.map((p) => p.expanded)
-
-    // Jaccard+length matrix (always available)
-    const jaccardMatrix: TransitionMatrix = (() => {
-      const n = texts.length
-      const m: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
-      for (let i = 0; i < n; i++) {
-        for (let j = 0; j < n; j++) {
-          if (i === j) continue
-          const t1 = texts[i].toLowerCase()
-          const t2 = texts[j].toLowerCase()
-          const w1 = new Set(t1.split(/\s+/).filter(Boolean))
-          const w2 = new Set(t2.split(/\s+/).filter(Boolean))
-          const inter = [...w1].filter((x) => w2.has(x)).length
-          const union = new Set([...w1, ...w2]).size
-          const lex = union > 0 ? inter / union : 0
-          const len = 1 - Math.abs(t1.length - t2.length) / Math.max(t1.length, t2.length, 1)
-          m[i][j] = 0.5 * lex + 0.5 * len
-        }
-      }
-      return m
-    })()
-
-    // Discourse matrix (always available — no API)
     const discourseMatrix = computeDiscourseMatrix(texts)
+    const n = texts.length
 
     let transitionMatrix: TransitionMatrix
     try {
-      // Run embeddings and LLM directional scoring in parallel
-      const [embeddings, llmMatrix] = await Promise.all([
-        computeEmbeddings(texts, { kind: "openai", model: "text-embedding-3-small" }),
-        computeLLMDirectionalScores(texts),
+      const [embeddings, nliMatrix] = await Promise.all([
+        computeEmbeddings(texts, {
+          kind: "huggingface",
+          model: "sentence-transformers/all-mpnet-base-v2",
+        }),
+        computeNarrativeNLIMatrix(texts),
       ])
-      const cosineMatrix = computeCosineMatrix(embeddings)
-      // Blend: Jaccard 0.35 + cosine 0.3 + LLM directional 0.35
-      const n = texts.length
-      transitionMatrix = Array.from({ length: n }, (_, i) =>
-        Array.from({ length: n }, (_, j) =>
-          i === j
-            ? 0
-            : 0.35 * (jaccardMatrix[i]?.[j] ?? 0) +
-              0.30 * ((cosineMatrix[i]?.[j] + 1) / 2) +
-              0.35 * (llmMatrix[i]?.[j] ?? 0),
-        ),
+      const cosRaw = computeCosineMatrix(embeddings)
+      transitionMatrix = blendThreeTransitionMatrices(
+        discourseMatrix,
+        nliMatrix,
+        cosRaw,
+        0.15,
+        0.45,
+        0.4,
       )
-    } catch {
-      // OpenAI unavailable — use HF cosine + discourse markers
+    } catch (primaryErr) {
+      console.warn("Threader primary blend (discourse + HF NLI + HF encoder) failed:", primaryErr)
       try {
         const embeddings = await computeEmbeddings(texts, {
           kind: "huggingface",
           model: "sentence-transformers/all-mpnet-base-v2",
         })
-        const cosineMatrix = computeCosineMatrix(embeddings)
-        const n = texts.length
-        transitionMatrix = Array.from({ length: n }, (_, i) =>
-          Array.from({ length: n }, (_, j) =>
-            i === j
-              ? 0
-              : 0.45 * (jaccardMatrix[i]?.[j] ?? 0) +
-                0.30 * ((cosineMatrix[i]?.[j] + 1) / 2) +
-                0.25 * (discourseMatrix[i]?.[j] ?? 0),
-          ),
+        transitionMatrix = blendDiscourseEncoder(
+          discourseMatrix,
+          computeCosineMatrix(embeddings),
+          0.35,
+          0.65,
         )
       } catch {
-        // All APIs unavailable — Jaccard + discourse markers
-        console.warn("Embedding APIs unavailable, using Jaccard+discourse ordering")
-        const n = texts.length
-        transitionMatrix = Array.from({ length: n }, (_, i) =>
-          Array.from({ length: n }, (_, j) =>
-            i === j ? 0 : 0.7 * (jaccardMatrix[i]?.[j] ?? 0) + 0.3 * (discourseMatrix[i]?.[j] ?? 0),
-          ),
-        )
+        try {
+          const embeddings = await computeEmbeddings(texts, {
+            kind: "openai",
+            model: "text-embedding-3-small",
+          })
+          transitionMatrix = blendDiscourseEncoder(
+            discourseMatrix,
+            computeCosineMatrix(embeddings),
+            0.35,
+            0.65,
+          )
+        } catch {
+          transitionMatrix = discourseMatrix
+        }
       }
     }
 

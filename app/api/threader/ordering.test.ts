@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest"
 import {
   computeEmbeddings,
   computeDiscourseMatrix,
+  computeDirectionalScores,
   computeLLMDirectionalScores,
   cosineSimilarity,
+  THREADER_NARRATIVE_NLI_MODELS,
   type TransitionMatrix,
 } from "./route"
 
@@ -305,6 +307,26 @@ const gold: GoldExample[] = [
     ],
     correctOrder: [0, 1, 2, 3, 4],
   },
+  {
+    name: "DivergentPersonalStatement",
+    points: [
+      "I competed in diving through high school and learned to perform under pressure.",
+      "I taught myself Korean and spent months afraid to speak in front of native speakers.",
+      "I did a robotics internship where debugging failures in front of mentors felt public.",
+      "I started a tiny design business and had to pitch ideas before I felt ready.",
+    ],
+    correctOrder: [0, 1, 2, 3],
+  },
+  {
+    name: "SkillTransferArc",
+    points: [
+      "I rebuilt a broken bike from YouTube tutorials with no mentor.",
+      "I learned to cook by ruining the same dish until the ratios finally clicked.",
+      "I picked up guitar alone and accepted sounding bad for a year.",
+      "Those messy starts taught me I learn fastest when I build in public and revise.",
+    ],
+    correctOrder: [0, 1, 2, 3],
+  },
 ]
 
 // ─── Signal specification ──────────────────────────────────────────────────────
@@ -313,11 +335,13 @@ const gold: GoldExample[] = [
 // This allows pure rows (1 signal) and blends (2-3 signals) with no code changes.
 
 type ScoringSpec =
-  | { kind: "jaccard" }                                           // lexical + length, no API
-  | { kind: "discourse" }                                         // rule-based discourse markers, no API
-  | { kind: "openai-embed"; model: "text-embedding-3-small" }    // cosine similarity
-  | { kind: "hf-embed"; model: string }                          // cosine similarity
-  | { kind: "llm-directional" }                                   // GPT-4o-mini pairwise "does B follow A?"
+  | { kind: "jaccard" }
+  | { kind: "discourse" }
+  | { kind: "openai-embed"; model: "text-embedding-3-small" }
+  | { kind: "hf-embed"; model: string }
+  | { kind: "google-embed" }
+  | { kind: "hf-nli"; model: string }
+  | { kind: "llm-directional" }
 
 type MatrixRow = {
   id: number
@@ -325,54 +349,73 @@ type MatrixRow = {
   signals: Array<{ spec: ScoringSpec; weight: number }>
 }
 
-// ─── Matrix rows ───────────────────────────────────────────────────────────────
-// Rows 1–2  : pure baselines (no API)
-// Rows 3–5  : pure ML baselines (embeddings)
-// Row  6    : LLM directional alone — tests GPT-4o-mini as ordering judge
-// Rows 7–9  : Jaccard + cosine hybrids — does cosine add to the baseline?
-// Rows 10–11: Jaccard + discourse — does rule-based direction add to baseline?
-// Rows 12–13: Jaccard + LLM directional — the main hypothesis
-// Row  14   : triple blend Jaccard + cosine + LLM (the production candidate)
+const [NLI_M1, NLI_M2, NLI_M3] = THREADER_NARRATIVE_NLI_MODELS
+
+// Matrix: controls → pure signals → production-style triples → LLM comparison blends.
+// Pick final weights from logs + mechanism fit (not tau alone).
 const matrix: MatrixRow[] = [
-  // ── Pure baselines ──
-  { id: 1,  name: "Jaccard+length",
-    signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
-  { id: 2,  name: "Discourse markers",
-    signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
-  // ── Pure ML ──
-  { id: 3,  name: "OpenAI text-embedding-3-small",
-    signals: [{ spec: { kind: "openai-embed", model: "text-embedding-3-small" }, weight: 1 }] },
-  { id: 4,  name: "HF all-mpnet-base-v2",
-    signals: [{ spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 1 }] },
-  { id: 5,  name: "HF BGE small",
-    signals: [{ spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 1 }] },
-  // ── LLM directional alone ──
-  { id: 6,  name: "LLM directional (GPT-4o-mini)",
-    signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
-  // ── Jaccard + cosine hybrids ──
-  { id: 7,  name: "Jaccard(0.5) + mpnet(0.5)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.5 }] },
-  { id: 8,  name: "Jaccard(0.7) + mpnet(0.3)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.7 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.3 }] },
-  { id: 9,  name: "Jaccard(0.3) + mpnet(0.7)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.3 }, { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.7 }] },
-  // ── Jaccard + discourse hybrids ──
-  { id: 10, name: "Jaccard(0.7) + discourse(0.3)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.7 }, { spec: { kind: "discourse" }, weight: 0.3 }] },
-  { id: 11, name: "Jaccard(0.5) + discourse(0.5)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "discourse" }, weight: 0.5 }] },
-  // ── Jaccard + LLM directional ──
-  { id: 12, name: "Jaccard(0.5) + LLM(0.5)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.5 }, { spec: { kind: "llm-directional" }, weight: 0.5 }] },
-  { id: 13, name: "Jaccard(0.35) + LLM(0.65)",
-    signals: [{ spec: { kind: "jaccard" }, weight: 0.35 }, { spec: { kind: "llm-directional" }, weight: 0.65 }] },
-  // ── Triple blend (production candidate) ──
-  { id: 14, name: "Jaccard(0.35) + mpnet(0.3) + LLM(0.35)",
+  { id: 1, name: "Jaccard+length (control)", signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
+  { id: 2, name: "Discourse markers", signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
+  { id: 3, name: "OpenAI text-embedding-3-small", signals: [{ spec: { kind: "openai-embed", model: "text-embedding-3-small" }, weight: 1 }] },
+  { id: 4, name: "HF all-mpnet-base-v2", signals: [{ spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 1 }] },
+  { id: 5, name: "HF BGE small", signals: [{ spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 1 }] },
+  { id: 6, name: "Google text-embedding-004", signals: [{ spec: { kind: "google-embed" }, weight: 1 }] },
+  { id: 7, name: `HF narrative NLI (${NLI_M1})`, signals: [{ spec: { kind: "hf-nli", model: NLI_M1 }, weight: 1 }] },
+  { id: 8, name: `HF narrative NLI (${NLI_M2})`, signals: [{ spec: { kind: "hf-nli", model: NLI_M2 }, weight: 1 }] },
+  { id: 9, name: `HF narrative NLI (${NLI_M3})`, signals: [{ spec: { kind: "hf-nli", model: NLI_M3 }, weight: 1 }] },
+  { id: 10, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
+  {
+    id: 11,
+    name: "discourse(0.15)+NLI(distilbert)(0.45)+mpnet(0.40)",
     signals: [
-      { spec: { kind: "jaccard" }, weight: 0.35 },
-      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.30 },
-      { spec: { kind: "llm-directional" }, weight: 0.35 },
-    ] },
+      { spec: { kind: "discourse" }, weight: 0.15 },
+      { spec: { kind: "hf-nli", model: NLI_M1 }, weight: 0.45 },
+      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.4 },
+    ],
+  },
+  {
+    id: 12,
+    name: "discourse(0.10)+NLI(distilbert)(0.50)+mpnet(0.40)",
+    signals: [
+      { spec: { kind: "discourse" }, weight: 0.1 },
+      { spec: { kind: "hf-nli", model: NLI_M1 }, weight: 0.5 },
+      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.4 },
+    ],
+  },
+  {
+    id: 13,
+    name: "discourse(0.20)+NLI(distilbert)(0.40)+mpnet(0.40)",
+    signals: [
+      { spec: { kind: "discourse" }, weight: 0.2 },
+      { spec: { kind: "hf-nli", model: NLI_M1 }, weight: 0.4 },
+      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.4 },
+    ],
+  },
+  {
+    id: 14,
+    name: "discourse(0.5)+LLM(0.5)",
+    signals: [
+      { spec: { kind: "discourse" }, weight: 0.5 },
+      { spec: { kind: "llm-directional" }, weight: 0.5 },
+    ],
+  },
+  {
+    id: 15,
+    name: "google-embed(0.5)+LLM(0.5)",
+    signals: [
+      { spec: { kind: "google-embed" }, weight: 0.5 },
+      { spec: { kind: "llm-directional" }, weight: 0.5 },
+    ],
+  },
+  {
+    id: 16,
+    name: "discourse(0.2)+google(0.4)+LLM(0.4)",
+    signals: [
+      { spec: { kind: "discourse" }, weight: 0.2 },
+      { spec: { kind: "google-embed" }, weight: 0.4 },
+      { spec: { kind: "llm-directional" }, weight: 0.4 },
+    ],
+  },
 ]
 
 // ─── Build a single signal's scoring matrix ────────────────────────────────────
@@ -389,11 +432,16 @@ async function buildSignalMatrix(points: string[], spec: ScoringSpec): Promise<T
     return computeLLMDirectionalScores(points)
   }
 
-  // Cosine embedding signals
+  if (spec.kind === "hf-nli") {
+    return computeDirectionalScores(points, { kind: "nli", model: spec.model })
+  }
+
   const embeddings =
     spec.kind === "openai-embed"
       ? await computeEmbeddings(points, { kind: "openai", model: spec.model })
-      : await computeEmbeddings(points, { kind: "huggingface", model: spec.model })
+      : spec.kind === "google-embed"
+        ? await computeEmbeddings(points, { kind: "google", model: "text-embedding-004" })
+        : await computeEmbeddings(points, { kind: "huggingface", model: spec.model })
 
   const n = points.length
   const m: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
@@ -410,8 +458,9 @@ async function buildSignalMatrix(points: string[], spec: ScoringSpec): Promise<T
 function requiredEnvFor(row: MatrixRow): string[] {
   const vars = new Set<string>()
   for (const { spec } of row.signals) {
-    if (spec.kind === "openai-embed" || spec.kind === "llm-directional") vars.add("OPENAI_API_KEY")
-    if (spec.kind === "hf-embed") vars.add("HUGGINGFACE_API_KEY")
+    if (spec.kind === "openai-embed") vars.add("OPENAI_API_KEY")
+    if (spec.kind === "hf-embed" || spec.kind === "hf-nli") vars.add("HUGGINGFACE_API_KEY")
+    if (spec.kind === "google-embed") vars.add("GOOGLE_GENERATIVE_AI_API_KEY")
   }
   return [...vars]
 }
@@ -497,6 +546,6 @@ describe("Threader ordering matrix evaluation", () => {
       }
     }
     console.log("==============================\n")
-  }, 180_000)
+  }, 300_000)
 })
 
