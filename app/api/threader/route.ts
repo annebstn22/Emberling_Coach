@@ -237,7 +237,8 @@ function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
       if (entail && typeof entail.score === "number") return entail.score
       // DistilBERT-MNLI often returns LABEL_0/1/2 = contradiction/neutral/entailment
       if (items.length === 3 && items.every((x) => typeof x.score === "number")) {
-        return items[2]!.score
+        const s = items[2]?.score
+        return typeof s === "number" ? s : null
       }
       if (items.length === 1 && typeof items[0]?.score === "number") return items[0].score
     }
@@ -1099,6 +1100,12 @@ export async function POST(request: NextRequest) {
 
     console.log("Generated bridges:", bridges)
 
+    const path = bestOrdering.path
+    const link_scores: number[] = []
+    for (let i = 0; i < path.length - 1; i++) {
+      link_scores.push(transitionMatrix[path[i]]?.[path[i + 1]] ?? 0)
+    }
+
     // Return results with original points (not expanded) and bridges
     return NextResponse.json({
       all_points: validPoints,
@@ -1111,6 +1118,7 @@ export async function POST(request: NextRequest) {
         ...bestOrdering,
         ordered_points: bestOrdering.path.map((idx) => validPoints[idx]),
         bridges: bridges,
+        link_scores,
       },
     })
   } catch (error) {

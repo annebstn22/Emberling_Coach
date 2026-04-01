@@ -488,8 +488,7 @@ type MatrixRow =
   | { id: number; name: string; fusion: "gated-disc-bge-llm" }
 
 // Matrix: HF embedding rows only (NLI eval removed — HF returns unstable shapes for our router).
-// discourse(0.5)+LLM runs first among LLM rows, then pure LLM, then discourse+BGE+LLM for
-// easy log comparison. Rows that only hit Vercel AI rate limits are kept (free tier).
+// Gated disc+BGE+LLM runs first among LLM rows (rate limits). Then discourse+LLM, pure LLM, linear triple.
 const matrix: MatrixRow[] = [
   { id: 1, name: "Jaccard+length (lexical control)", signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
   { id: 2, name: "Discourse markers (rules)", signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
@@ -497,26 +496,26 @@ const matrix: MatrixRow[] = [
   { id: 4, name: "HF BGE small (semantics, symmetric)", signals: [{ spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 1 }] },
   {
     id: 5,
+    name: "gated disc+BGE+LLM (low margin or disc/LLM disagree → LLM-heavy blend)",
+    fusion: "gated-disc-bge-llm",
+  },
+  {
+    id: 6,
     name: "discourse(0.5)+LLM(0.5)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.5 },
       { spec: { kind: "llm-directional" }, weight: 0.5 },
     ],
   },
-  { id: 6, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
+  { id: 7, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
   {
-    id: 7,
+    id: 8,
     name: "linear disc(0.15)+BGE-small(0.35)+LLM(0.50)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.15 },
       { spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 0.35 },
       { spec: { kind: "llm-directional" }, weight: 0.5 },
     ],
-  },
-  {
-    id: 8,
-    name: "gated disc+BGE+LLM (low margin or disc/LLM disagree → LLM-heavy blend)",
-    fusion: "gated-disc-bge-llm",
   },
 ]
 
