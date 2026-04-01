@@ -1,11 +1,9 @@
 import { describe, it, expect } from "vitest"
 import {
-  computeDirectionalScores,
   computeEmbeddings,
   computeDiscourseMatrix,
   computeLLMDirectionalScores,
   cosineSimilarity,
-  THREADER_NLI_MODEL,
   type TransitionMatrix,
 } from "./route"
 
@@ -349,7 +347,6 @@ type ScoringSpec =
   | { kind: "jaccard" }
   | { kind: "discourse" }
   | { kind: "hf-embed"; model: string }
-  | { kind: "hf-nli"; model: string }
   | { kind: "llm-directional" }
 
 type MatrixRow = {
@@ -358,43 +355,27 @@ type MatrixRow = {
   signals: Array<{ spec: ScoringSpec; weight: number }>
 }
 
-// Slim matrix: only signals that run with HUGGINGFACE_API_KEY + Vercel AI Gateway (no Google).
-// Interpretation: tau ~0.5+ is "good enough" directional agreement on this small gold set;
-// pairwise acc = (tau+1)/2 (0.5 = random). Rows that call the LLM are ordered so the
-// discourse+BGE+LLM blend runs before pure-LLM rows to reduce the chance the first Gateway
-// hit is a standalone LLM call (rate limits).
+// Matrix: HF embedding rows only (NLI eval removed — HF returns unstable shapes for our router).
+// Pure LLM runs before discourse+BGE+LLM so logs compare those two side by side. Rows that
+// only hit Vercel AI rate limits are kept (expected flakiness on free tier).
 const matrix: MatrixRow[] = [
   { id: 1, name: "Jaccard+length (lexical control)", signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
   { id: 2, name: "Discourse markers (rules)", signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
   { id: 3, name: "HF mpnet (semantics, symmetric)", signals: [{ spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 1 }] },
   { id: 4, name: "HF BGE small (semantics, symmetric)", signals: [{ spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 1 }] },
-  {
-    id: 5,
-    name: `HF NLI ${THREADER_NLI_MODEL} (narrative hypothesis, string inputs)`,
-    signals: [{ spec: { kind: "hf-nli", model: THREADER_NLI_MODEL }, weight: 1 }],
-  },
+  { id: 5, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
   {
     id: 6,
-    name: "discourse(0.15)+BGE-small(0.35)+LLM(0.50) — first LLM in matrix",
+    name: "discourse(0.15)+BGE-small(0.35)+LLM(0.50)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.15 },
       { spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 0.35 },
       { spec: { kind: "llm-directional" }, weight: 0.5 },
     ],
   },
-  { id: 7, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
   {
-    id: 8,
-    name: "Production-style: disc(0.15)+NLI(0.45)+mpnet(0.40)",
-    signals: [
-      { spec: { kind: "discourse" }, weight: 0.15 },
-      { spec: { kind: "hf-nli", model: THREADER_NLI_MODEL }, weight: 0.45 },
-      { spec: { kind: "hf-embed", model: "sentence-transformers/all-mpnet-base-v2" }, weight: 0.4 },
-    ],
-  },
-  {
-    id: 9,
-    name: "discourse(0.5)+LLM(0.5) (when Gateway not rate-limited)",
+    id: 7,
+    name: "discourse(0.5)+LLM(0.5)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.5 },
       { spec: { kind: "llm-directional" }, weight: 0.5 },
@@ -416,10 +397,6 @@ async function buildSignalMatrix(points: string[], spec: ScoringSpec): Promise<T
     return computeLLMDirectionalScores(points)
   }
 
-  if (spec.kind === "hf-nli") {
-    return computeDirectionalScores(points, { kind: "nli", model: spec.model })
-  }
-
   const embeddings = await computeEmbeddings(points, { kind: "huggingface", model: spec.model })
 
   const n = points.length
@@ -437,7 +414,7 @@ async function buildSignalMatrix(points: string[], spec: ScoringSpec): Promise<T
 function requiredEnvFor(row: MatrixRow): string[] {
   const vars = new Set<string>()
   for (const { spec } of row.signals) {
-    if (spec.kind === "hf-embed" || spec.kind === "hf-nli") vars.add("HUGGINGFACE_API_KEY")
+    if (spec.kind === "hf-embed") vars.add("HUGGINGFACE_API_KEY")
   }
   return [...vars]
 }
@@ -520,11 +497,15 @@ describe("Threader ordering matrix evaluation", () => {
         const isMissingKey = reasons.includes("_API_KEY")
         const isGateway =
           reasons.includes("AI Gateway") || reasons.includes("default provider")
+        const isRateLimit =
+          /rate limit/i.test(reasons) || reasons.includes("Free credits temporarily")
         const tag = isMissingKey
           ? "SKIP (no key)  "
-          : isGateway
-            ? "SKIP (Gateway) "
-            : "SKIP (API err) "
+          : isRateLimit
+            ? "SKIP (rate limit) "
+            : isGateway
+              ? "SKIP (Gateway) "
+              : "SKIP (API err) "
         console.log(`#${String(r.id).padStart(2)} ${tag} ${r.name} — ${reasons}`)
       } else {
         console.log(`#${String(r.id).padStart(2)} OK             ${r.name} | tau=${r.meanTau?.toFixed(3)} | acc=${r.meanAcc?.toFixed(3)}`)
