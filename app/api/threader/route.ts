@@ -1,5 +1,4 @@
-import { embedMany, generateText } from "ai"
-import { google } from "@ai-sdk/google"
+import { generateText } from "ai"
 import { type NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
 
@@ -26,7 +25,6 @@ export type TransitionMatrix = number[][]
 type EmbeddingProvider =
   | { kind: "openai"; model: "text-embedding-3-small" }
   | { kind: "huggingface"; model: string }
-  | { kind: "google"; model: "text-embedding-004" }
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY
@@ -137,22 +135,12 @@ async function computeEmbeddingsHuggingFace(
   return vectors
 }
 
-async function computeEmbeddingsGoogle(texts: string[]): Promise<EmbeddingVector[]> {
-  if (texts.length === 0) return []
-  const { embeddings } = await embedMany({
-    model: google.textEmbeddingModel("text-embedding-004"),
-    values: texts,
-  })
-  return embeddings.map((e) => [...e])
-}
-
 export async function computeEmbeddings(
   texts: string[],
   provider: EmbeddingProvider = { kind: "openai", model: "text-embedding-3-small" },
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return []
   if (provider.kind === "openai") return computeEmbeddingsOpenAI(texts)
-  if (provider.kind === "google") return computeEmbeddingsGoogle(texts)
   return computeEmbeddingsHuggingFace(texts, provider.model)
 }
 
@@ -173,14 +161,11 @@ function softmax(logits: number[]): number[] {
 // and input format than standard text-classification pair models.
 const ZERO_SHOT_NLI_MODELS = new Set(["facebook/bart-large-mnli"])
 
-// Small MNLI / cross-encoder models: use narrative-framed hypothesis (order plausibility).
-export const THREADER_NARRATIVE_NLI_MODELS = [
-  "typeform/distilbert-base-uncased-mnli",
-  "cross-encoder/nli-MiniLM2-L6-H768",
-  "MoritzLaurer/deberta-v3-small-mnli-fever-docnli-ling-2c",
-] as const
+// Single NLI model verified on HF Inference Router: use one string `inputs` (see huggingFacePairScore).
+// Object { text, text_pair } causes 400: TextClassificationPipeline missing 'inputs'.
+export const THREADER_NLI_MODEL = "typeform/distilbert-base-uncased-mnli"
 
-const NARRATIVE_NLI_MODELS = new Set<string>(THREADER_NARRATIVE_NLI_MODELS)
+const NARRATIVE_NLI_MODELS = new Set<string>([THREADER_NLI_MODEL])
 
 function narrativeHypothesisForPair(nextFragment: string): string {
   return `The next point in this personal narrative is: ${nextFragment}`
@@ -199,7 +184,6 @@ async function huggingFacePairScore(
 
   if (ZERO_SHOT_NLI_MODELS.has(model)) {
     // bart-large-mnli: zero-shot-classification pipeline.
-    // We frame "textPair follows from text" as a candidate label.
     const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/zero-shot-classification`
     const res = await fetch(url, {
       method: "POST",
@@ -211,7 +195,7 @@ async function huggingFacePairScore(
         inputs: text,
         parameters: {
           candidate_labels: ["entailment", "neutral", "contradiction"],
-          hypothesis_template: `{}. ${textPair}`,
+          hypothesis_template: `The next point in this personal narrative is: ${textPair}. This is {}.`,
         },
       }),
     })
@@ -222,41 +206,25 @@ async function huggingFacePairScore(
     return (await res.json()) as unknown
   }
 
-  // Standard NLI text-classification pair models (e.g. FacebookAI/roberta-large-mnli).
-  // Try text_pair format first; if that 404s, fall back to RoBERTa's concatenated format.
+  // HF Inference Router: text-classification expects `inputs` as a single string, not
+  // `{ text, text_pair }` (that yields 400 from the hosted pipeline).
   const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
+  const concatenated = `${text} </s></s> ${hypothesis}`
 
-  const resPair = await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ inputs: { text, text_pair: hypothesis } }),
+    body: JSON.stringify({ inputs: concatenated }),
   })
 
-  if (resPair.ok) return (await resPair.json()) as unknown
-
-  if (resPair.status !== 404) {
-    const msg = await resPair.text().catch(() => "")
-    throw new Error(`HuggingFace directional score failed (${resPair.status}): ${msg}`)
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
   }
-
-  // 404 fallback: send as concatenated RoBERTa-style string "[premise] </s></s> [hypothesis]"
-  const resConcat = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: `${text} </s></s> ${hypothesis}` }),
-  })
-
-  if (!resConcat.ok) {
-    const msg = await resConcat.text().catch(() => "")
-    throw new Error(`HuggingFace directional score failed (${resConcat.status}): ${msg}`)
-  }
-  return (await resConcat.json()) as unknown
+  return (await res.json()) as unknown
 }
 
 function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
@@ -267,7 +235,10 @@ function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
     if (typeof (items[0] as any)?.label === "string") {
       const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
       if (entail && typeof entail.score === "number") return entail.score
-      // Some cross-encoders return a single regression-style score
+      // DistilBERT-MNLI often returns LABEL_0/1/2 = contradiction/neutral/entailment
+      if (items.length === 3 && items.every((x) => typeof x.score === "number")) {
+        return items[2]!.score
+      }
       if (items.length === 1 && typeof items[0]?.score === "number") return items[0].score
     }
   }
@@ -318,7 +289,7 @@ function extractMsMarcoScore(json: unknown): number | null {
 
 export async function computeDirectionalScores(
   texts: string[],
-  provider: DirectionalProvider = { kind: "nli", model: "FacebookAI/roberta-large-mnli" },
+  provider: DirectionalProvider = { kind: "nli", model: THREADER_NLI_MODEL },
 ): Promise<TransitionMatrix> {
   const n = texts.length
   const matrix: TransitionMatrix = Array.from({ length: n }, () =>
@@ -349,17 +320,9 @@ export async function computeDirectionalScores(
   return matrix
 }
 
-/** Try narrative-framed NLI models in order until one succeeds (HF Inference). */
+/** Narrative-framed NLI (DistilBERT-MNLI on HF Router, string `inputs` only). */
 export async function computeNarrativeNLIMatrix(texts: string[]): Promise<TransitionMatrix> {
-  let lastErr: Error | null = null
-  for (const model of THREADER_NARRATIVE_NLI_MODELS) {
-    try {
-      return await computeDirectionalScores(texts, { kind: "nli", model })
-    } catch (e) {
-      lastErr = e instanceof Error ? e : new Error(String(e))
-    }
-  }
-  throw lastErr ?? new Error("All narrative NLI models failed")
+  return computeDirectionalScores(texts, { kind: "nli", model: THREADER_NLI_MODEL })
 }
 
 // ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
