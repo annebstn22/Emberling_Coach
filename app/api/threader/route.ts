@@ -1131,6 +1131,8 @@ export async function POST(request: NextRequest) {
         ordered_points: bestOrdering.path.map((idx) => validPoints[idx]),
         bridges: bridges,
         link_scores,
+        // So the deployed app shows which path ran (server logs are easy to miss in Vercel UI).
+        ordering_blend: orderingBlendUsed,
       },
     })
   } catch (error) {

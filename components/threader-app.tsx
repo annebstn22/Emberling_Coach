@@ -57,6 +57,8 @@ interface ThreaderResponse {
     ordered_points: string[]
     bridges: string[]
     link_scores?: number[]
+    /** Which transition-matrix blend ran (PRIMARY vs FALLBACK 1–3). */
+    ordering_blend?: string
   }
 }
 
@@ -825,6 +827,29 @@ export default function ThreaderApp({
                   edit points
                 </button>
               </div>
+              {bestOrdering.ordering_blend && (
+                <div
+                  className="px-5 py-2.5 border-b border-gray-200"
+                  style={{ background: "var(--gold-bg, #fdf8ee)" }}
+                >
+                  <div
+                    className="text-[0.6rem] uppercase tracking-[0.12em] mb-1"
+                    style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}
+                  >
+                    Ordering blend (this deployment)
+                  </div>
+                  <p
+                    className="text-[0.7rem] leading-snug break-words m-0"
+                    style={{
+                      color: "var(--ink2, #4a4640)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                    title={bestOrdering.ordering_blend}
+                  >
+                    {bestOrdering.ordering_blend}
+                  </p>
+                </div>
+              )}
               <div className="divide-y divide-gray-200">
                 {bestOrdering.ordered_points.map((point, idx) => (
                   <div key={idx}>

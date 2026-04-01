@@ -31,6 +31,7 @@ interface ThreaderResponse {
     ordered_points: string[]
     bridges: string[]
     link_scores?: number[]
+    ordering_blend?: string
   }
 }
 
@@ -238,6 +239,16 @@ export default function ThreaderEmbedded({
     return (
       <div className="space-y-3">
         <div className="bg-white border border-[#a8c8e8] rounded-lg overflow-hidden">
+          {orderingResult.best_ordering.ordering_blend && (
+            <div className="px-3 py-2 border-b border-[#e0dbd0] bg-[#fdf8ee]">
+              <div className="font-mono text-[0.54rem] uppercase tracking-wider text-[#9a948a] mb-0.5">
+                Ordering blend
+              </div>
+              <p className="font-mono text-[0.65rem] text-[#4a4640] m-0 leading-snug break-words">
+                {orderingResult.best_ordering.ordering_blend}
+              </p>
+            </div>
+          )}
           {orderedPoints.map((point, idx) => (
             <div key={idx}>
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm">
@@ -377,6 +388,16 @@ export default function ThreaderEmbedded({
       {/* Result */}
       {orderingResult && (
         <div className="bg-white border border-[#a8c8e8] rounded-lg overflow-hidden mt-2 animate-in fade-in slide-in-from-bottom-2">
+          {orderingResult.best_ordering.ordering_blend && (
+            <div className="px-3 py-2 border-b border-[#e0dbd0] bg-[#fdf8ee]">
+              <div className="font-mono text-[0.54rem] uppercase tracking-wider text-[#9a948a] mb-0.5">
+                Ordering blend
+              </div>
+              <p className="font-mono text-[0.65rem] text-[#4a4640] m-0 leading-snug break-words">
+                {orderingResult.best_ordering.ordering_blend}
+              </p>
+            </div>
+          )}
           {orderedPoints.map((point, idx) => (
             <div key={idx}>
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm animate-in fade-in slide-in-from-left-2">
