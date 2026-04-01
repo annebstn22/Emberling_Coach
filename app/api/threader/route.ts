@@ -1022,6 +1022,7 @@ export async function POST(request: NextRequest) {
     const n = texts.length
 
     let transitionMatrix: TransitionMatrix
+    let orderingBlendUsed: string
     try {
       const [embeddings, nliMatrix] = await Promise.all([
         computeEmbeddings(texts, {
@@ -1039,6 +1040,10 @@ export async function POST(request: NextRequest) {
         0.45,
         0.4,
       )
+      orderingBlendUsed =
+        "PRIMARY — discourse(0.15) + NLI " +
+        THREADER_NLI_MODEL +
+        "(0.45) + HF mpnet cosine sentence-transformers/all-mpnet-base-v2 (0.40)"
     } catch (primaryErr) {
       console.warn("Threader primary blend (discourse + HF NLI + HF encoder) failed:", primaryErr)
       try {
@@ -1052,6 +1057,8 @@ export async function POST(request: NextRequest) {
           0.35,
           0.65,
         )
+        orderingBlendUsed =
+          "FALLBACK 1 — discourse(0.35) + HF mpnet cosine sentence-transformers/all-mpnet-base-v2 (0.65)"
       } catch {
         try {
           const embeddings = await computeEmbeddings(texts, {
@@ -1064,11 +1071,16 @@ export async function POST(request: NextRequest) {
             0.35,
             0.65,
           )
+          orderingBlendUsed =
+            "FALLBACK 2 — discourse(0.35) + OpenAI text-embedding-3-small cosine (0.65)"
         } catch {
           transitionMatrix = discourseMatrix
+          orderingBlendUsed = "FALLBACK 3 — discourse matrix only (no embeddings / NLI)"
         }
       }
     }
+
+    console.log("[Threader] Ordering blend in use:", orderingBlendUsed)
 
     // Step 3: Generate three orderings using different algorithms
     const orderings: OrderingResult[] = [

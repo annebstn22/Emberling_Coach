@@ -240,7 +240,7 @@ function combineMatrices(
   return out
 }
 
-// Core set: always runs in CI (`pnpm test`). Extended set runs when THREADER_FULL_GOLD=1.
+// Core + extended run by default (`pnpm test`). Set THREADER_CORE_GOLD_ONLY=1 for the 6-example fast path.
 // Reference orders use a documented spine (time, causality, thesis flow, explicit markers).
 
 const goldCore: GoldExample[] = [
@@ -464,8 +464,8 @@ const goldExtended: GoldExample[] = [
 ]
 
 function activeGoldExamples(): GoldExample[] {
-  if (process.env.THREADER_FULL_GOLD === "1") return [...goldCore, ...goldExtended]
-  return goldCore
+  if (process.env.THREADER_CORE_GOLD_ONLY === "1") return goldCore
+  return [...goldCore, ...goldExtended]
 }
 
 // ─── Signal specification ──────────────────────────────────────────────────────
@@ -715,7 +715,7 @@ function fuseConfidenceAware(
 describe("Threader ordering matrix evaluation", () => {
   it("runs the full matrix (skips rows missing API keys)", async () => {
     const gold = activeGoldExamples()
-    const fullGold = process.env.THREADER_FULL_GOLD === "1"
+    const coreOnly = process.env.THREADER_CORE_GOLD_ONLY === "1"
 
     const results: Array<{
       id: number
@@ -783,7 +783,7 @@ describe("Threader ordering matrix evaluation", () => {
     }
 
     console.log(
-      `\n=== Threader Matrix Results (${gold.length} gold examples${fullGold ? ", THREADER_FULL_GOLD" : ", core only"}) ===`,
+      `\n=== Threader Matrix Results (${gold.length} gold examples${coreOnly ? ", THREADER_CORE_GOLD_ONLY" : ", core+extended"}) ===`,
     )
     for (const r of results) {
       if (!r.ran) {
