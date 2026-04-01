@@ -242,9 +242,11 @@ function combineMatrices(
   return out
 }
 
+// Reference orders are intentionally easy to justify: explicit time, cause→effect,
+// how-to sequence, or thesis→test→so. Divergence is in topic/domain, not in fuzzy ordering.
 const gold: GoldExample[] = [
   {
-    name: "ChronologicalEssayArc",
+    name: "ChronologicalApplication",
     points: [
       "I was hesitant to apply at first.",
       "I talked to a mentor and got clarity.",
@@ -255,7 +257,7 @@ const gold: GoldExample[] = [
     correctOrder: [0, 1, 2, 3, 4],
   },
   {
-    name: "CauseEffectChain",
+    name: "CauseEffectBurnout",
     points: [
       "I stopped sleeping well for weeks.",
       "My focus dropped and I procrastinated more.",
@@ -266,27 +268,27 @@ const gold: GoldExample[] = [
     correctOrder: [0, 1, 2, 3, 4],
   },
   {
-    name: "ArgumentWithSupport",
+    name: "ThesisEvidenceConclusion",
     points: [
-      "I believe constraints can make writing better.",
-      "A tight word limit forces you to choose the strongest ideas.",
-      "When I removed extra sentences, the main point became clearer.",
-      "This is why I draft long and then cut aggressively.",
+      "I argue that tiny daily practice beats waiting for big blocks of time.",
+      "I ran one month of fifteen-minute sessions on a single skill and tracked streaks.",
+      "I missed several days; restarting without shame mattered more than a perfect streak.",
+      "So I stopped postponing until I felt ready and committed to small consistent reps instead.",
     ],
     correctOrder: [0, 1, 2, 3],
   },
   {
-    name: "NarrativeTurn",
+    name: "NarrativeTurnExplicit",
     points: [
-      "I thought I was failing because it felt hard.",
-      "Then I realized difficulty was part of learning.",
-      "That reframed my self-talk and reduced the shame.",
-      "I kept practicing and improved steadily.",
+      "For months I read struggle as proof I was falling behind.",
+      "A mentor said friction is normal when a skill is actually growing.",
+      "I started logging small wins instead of only measuring the gap to the ideal.",
+      "Once the story changed, I practiced more steadily and stopped quitting after bad days.",
     ],
     correctOrder: [0, 1, 2, 3],
   },
   {
-    name: "SimpleProjectPlan",
+    name: "WritingProcessPipeline",
     points: [
       "Define the goal and audience clearly.",
       "Outline the main sections in rough bullets.",
@@ -297,33 +299,42 @@ const gold: GoldExample[] = [
     correctOrder: [0, 1, 2, 3, 4],
   },
   {
-    name: "MixedButDefensible",
+    name: "OnboardingTimeline",
     points: [
-      "I joined a new team and felt out of place.",
-      "I watched how decisions were made and took notes.",
-      "I asked small questions to test my understanding.",
-      "I proposed one change with a clear rationale.",
-      "I earned trust and started contributing more openly.",
-    ],
-    correctOrder: [0, 1, 2, 3, 4],
-  },
-  {
-    name: "DivergentPersonalStatement",
-    points: [
-      "I competed in diving through high school and learned to perform under pressure.",
-      "I taught myself Korean and spent months afraid to speak in front of native speakers.",
-      "I did a robotics internship where debugging failures in front of mentors felt public.",
-      "I started a tiny design business and had to pitch ideas before I felt ready.",
+      "Week one on a new team I mostly listened and felt invisible in meetings.",
+      "By week three I had a map of who owned which decisions and why.",
+      "I shipped a small documentation fix with a clear rationale and public review.",
+      "After that, people looped me in earlier and I contributed to planning.",
     ],
     correctOrder: [0, 1, 2, 3],
   },
   {
-    name: "SkillTransferArc",
+    name: "DivergentYearsChronology",
     points: [
-      "I rebuilt a broken bike from YouTube tutorials with no mentor.",
-      "I learned to cook by ruining the same dish until the ratios finally clicked.",
-      "I picked up guitar alone and accepted sounding bad for a year.",
-      "Those messy starts taught me I learn fastest when I build in public and revise.",
+      "Freshman year I trained for a judged sport where mistakes are visible the instant you enter the water.",
+      "Sophomore year I studied a new language and avoided speaking until a trip forced me into conversations.",
+      "Junior year I debugged hardware with a mentor watching my screen when things broke.",
+      "Senior year I sold something I made to strangers at a fair and had to explain it in thirty seconds.",
+    ],
+    correctOrder: [0, 1, 2, 3],
+  },
+  {
+    name: "MessyLearningMarkedSequence",
+    points: [
+      "First I fixed a bike alone, rewinding tutorials and ordering the wrong part once.",
+      "Next I learned one dish by ruining it until the ratios finally made sense.",
+      "Then I practiced an instrument badly in front of roommates for months.",
+      "Looking back, the shared pattern is messy starts in public, then revision, not one clean take.",
+    ],
+    correctOrder: [0, 1, 2, 3],
+  },
+  {
+    name: "VolunteerCrossDomainArc",
+    points: [
+      "I started volunteering in a chaotic back room sorting unpredictable donations.",
+      "I built a simple spreadsheet so the next shift could see what was already done.",
+      "I walked a new volunteer through the same workflow until they could run it alone.",
+      "The lesson I draw is I keep turning fuzzy piles into something the next person can repeat.",
     ],
     correctOrder: [0, 1, 2, 3],
   },
@@ -349,7 +360,9 @@ type MatrixRow = {
 
 // Slim matrix: only signals that run with HUGGINGFACE_API_KEY + Vercel AI Gateway (no Google).
 // Interpretation: tau ~0.5+ is "good enough" directional agreement on this small gold set;
-// pairwise acc = (tau+1)/2 (0.5 = random). LLM row is the thematic bridge baseline when Gateway allows.
+// pairwise acc = (tau+1)/2 (0.5 = random). Rows that call the LLM are ordered so the
+// discourse+BGE+LLM blend runs before pure-LLM rows to reduce the chance the first Gateway
+// hit is a standalone LLM call (rate limits).
 const matrix: MatrixRow[] = [
   { id: 1, name: "Jaccard+length (lexical control)", signals: [{ spec: { kind: "jaccard" }, weight: 1 }] },
   { id: 2, name: "Discourse markers (rules)", signals: [{ spec: { kind: "discourse" }, weight: 1 }] },
@@ -360,9 +373,18 @@ const matrix: MatrixRow[] = [
     name: `HF NLI ${THREADER_NLI_MODEL} (narrative hypothesis, string inputs)`,
     signals: [{ spec: { kind: "hf-nli", model: THREADER_NLI_MODEL }, weight: 1 }],
   },
-  { id: 6, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
   {
-    id: 7,
+    id: 6,
+    name: "discourse(0.15)+BGE-small(0.35)+LLM(0.50) — first LLM in matrix",
+    signals: [
+      { spec: { kind: "discourse" }, weight: 0.15 },
+      { spec: { kind: "hf-embed", model: "BAAI/bge-small-en-v1.5" }, weight: 0.35 },
+      { spec: { kind: "llm-directional" }, weight: 0.5 },
+    ],
+  },
+  { id: 7, name: "LLM directional (Gateway)", signals: [{ spec: { kind: "llm-directional" }, weight: 1 }] },
+  {
+    id: 8,
     name: "Production-style: disc(0.15)+NLI(0.45)+mpnet(0.40)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.15 },
@@ -371,7 +393,7 @@ const matrix: MatrixRow[] = [
     ],
   },
   {
-    id: 8,
+    id: 9,
     name: "discourse(0.5)+LLM(0.5) (when Gateway not rate-limited)",
     signals: [
       { spec: { kind: "discourse" }, weight: 0.5 },
