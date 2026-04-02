@@ -144,190 +144,8 @@ export async function computeEmbeddings(
   return computeEmbeddingsHuggingFace(texts, provider.model)
 }
 
-type DirectionalProvider =
-  | { kind: "nli"; model: string }
-  | { kind: "msmarco"; model: string }
-
-function softmax(logits: number[]): number[] {
-  if (logits.length === 0) return []
-  const max = Math.max(...logits)
-  const exps = logits.map((v) => Math.exp(v - max))
-  const sum = exps.reduce((a, b) => a + b, 0)
-  if (sum === 0) return logits.map(() => 0)
-  return exps.map((v) => v / sum)
-}
-
-// Zero-shot NLI models (e.g. facebook/bart-large-mnli) use a different pipeline
-// and input format than standard text-classification pair models.
-const ZERO_SHOT_NLI_MODELS = new Set(["facebook/bart-large-mnli"])
-
-// Single NLI model verified on HF Inference Router: use one string `inputs` (see huggingFacePairScore).
-// Object { text, text_pair } causes 400: TextClassificationPipeline missing 'inputs'.
-export const THREADER_NLI_MODEL = "typeform/distilbert-base-uncased-mnli"
-
 /** HF sentence embedding for Threader cosine signal: fast, strong on short English text. */
 export const THREADER_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-
-const NARRATIVE_NLI_MODELS = new Set<string>([THREADER_NLI_MODEL])
-
-function narrativeHypothesisForPair(nextFragment: string): string {
-  return `The next point in this personal narrative is: ${nextFragment}`
-}
-
-async function huggingFacePairScore(
-  model: string,
-  text: string,
-  textPair: string,
-): Promise<unknown> {
-  const apiKey = getHuggingFaceApiKey()
-  const encodedModel = model.split("/").map(encodeURIComponent).join("/")
-  const hypothesis = NARRATIVE_NLI_MODELS.has(model)
-    ? narrativeHypothesisForPair(textPair)
-    : textPair
-
-  if (ZERO_SHOT_NLI_MODELS.has(model)) {
-    // bart-large-mnli: zero-shot-classification pipeline.
-    const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/zero-shot-classification`
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs: text,
-        parameters: {
-          candidate_labels: ["entailment", "neutral", "contradiction"],
-          hypothesis_template: `The next point in this personal narrative is: ${textPair}. This is {}.`,
-        },
-      }),
-    })
-    if (!res.ok) {
-      const msg = await res.text().catch(() => "")
-      throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
-    }
-    return (await res.json()) as unknown
-  }
-
-  // HF Inference Router: text-classification expects `inputs` as a single string, not
-  // `{ text, text_pair }` (that yields 400 from the hosted pipeline).
-  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/text-classification`
-  const concatenated = `${text} </s></s> ${hypothesis}`
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ inputs: concatenated }),
-  })
-
-  if (!res.ok) {
-    const msg = await res.text().catch(() => "")
-    throw new Error(`HuggingFace directional score failed (${res.status}): ${msg}`)
-  }
-  return (await res.json()) as unknown
-}
-
-function extractEntailmentScoreFromNliResponse(json: unknown): number | null {
-  // Standard text-classification return: [{label, score}, ...]
-  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
-    const items = json as Array<{ label?: string; score?: number }>
-    // Check it's label/score pairs (not a nested zero-shot result)
-    if (typeof (items[0] as any)?.label === "string") {
-      const entail = items.find((x) => (x.label ?? "").toLowerCase().includes("entail"))
-      if (entail && typeof entail.score === "number") return entail.score
-      // DistilBERT-MNLI often returns LABEL_0/1/2 = contradiction/neutral/entailment
-      if (items.length === 3 && items.every((x) => typeof x.score === "number")) {
-        const s = items[2]?.score
-        return typeof s === "number" ? s : null
-      }
-      if (items.length === 1 && typeof items[0]?.score === "number") return items[0].score
-    }
-  }
-
-  // Raw logits: [contradiction, neutral, entailment]
-  if (Array.isArray(json) && json.length === 3 && json.every((x) => typeof x === "number")) {
-    const probs = softmax(json as number[])
-    return probs[2] ?? null
-  }
-
-  // Zero-shot-classification return (bart-large-mnli): { sequence, labels: [...], scores: [...] }
-  if (json !== null && typeof json === "object" && !Array.isArray(json)) {
-    const obj = json as any
-    if (Array.isArray(obj.labels) && Array.isArray(obj.scores)) {
-      const labels: unknown[] = obj.labels
-      const scores: unknown[] = obj.scores
-      const idx = labels.findIndex((l) => String(l).toLowerCase().includes("entail"))
-      const s = scores[idx]
-      if (typeof s === "number") return s
-    }
-  }
-
-  // Nested array: [{sequence, labels, scores}]
-  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
-    const first = json[0] as any
-    if (Array.isArray(first?.labels) && Array.isArray(first?.scores)) {
-      const labels: unknown[] = first.labels
-      const scores: unknown[] = first.scores
-      const idx = labels.findIndex((l) => String(l).toLowerCase().includes("entail"))
-      const s = scores[idx]
-      if (typeof s === "number") return s
-    }
-  }
-
-  return null
-}
-
-function extractMsMarcoScore(json: unknown): number | null {
-  // Often: [{label: "LABEL_0", score: 0.123}] (score is fine as-is)
-  if (Array.isArray(json) && json.length > 0 && typeof json[0] === "object") {
-    const item = json[0] as any
-    if (typeof item?.score === "number") return item.score
-  }
-  // Sometimes: just a number
-  if (typeof json === "number") return json
-  return null
-}
-
-export async function computeDirectionalScores(
-  texts: string[],
-  provider: DirectionalProvider = { kind: "nli", model: THREADER_NLI_MODEL },
-): Promise<TransitionMatrix> {
-  const n = texts.length
-  const matrix: TransitionMatrix = Array.from({ length: n }, () =>
-    new Array(n).fill(0),
-  )
-  if (n === 0) return matrix
-
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
-      const json = await huggingFacePairScore(provider.model, texts[i], texts[j])
-      if (provider.kind === "nli") {
-        const score = extractEntailmentScoreFromNliResponse(json)
-        if (score == null) {
-          throw new Error("Unexpected NLI response shape from HuggingFace")
-        }
-        matrix[i][j] = score
-      } else {
-        const score = extractMsMarcoScore(json)
-        if (score == null) {
-          throw new Error("Unexpected MS MARCO response shape from HuggingFace")
-        }
-        matrix[i][j] = score
-      }
-    }
-  }
-
-  return matrix
-}
-
-/** Narrative-framed NLI (DistilBERT-MNLI on HF Router, string `inputs` only). */
-export async function computeNarrativeNLIMatrix(texts: string[]): Promise<TransitionMatrix> {
-  return computeDirectionalScores(texts, { kind: "nli", model: THREADER_NLI_MODEL })
-}
 
 // ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
 // Maps each sentence to a narrative position [0,1]:
@@ -464,31 +282,6 @@ export function buildTransitionMatrix(
     }
   }
 
-  return out
-}
-
-/** Weighted blend: discourse (rules) + NLI directional + raw cosine [-1,1] → [0,1]. */
-function blendThreeTransitionMatrices(
-  discourse: TransitionMatrix,
-  nli: TransitionMatrix,
-  cosRaw: TransitionMatrix,
-  wDisc: number,
-  wNli: number,
-  wEnc: number,
-): TransitionMatrix {
-  const n = discourse.length
-  const t = wDisc + wNli + wEnc
-  const out: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
-      out[i][j] =
-        (wDisc * (discourse[i]?.[j] ?? 0) +
-          wNli * (nli[i]?.[j] ?? 0) +
-          wEnc * (((cosRaw[i]?.[j] ?? 0) + 1) / 2)) /
-        t
-    }
-  }
   return out
 }
 
@@ -1016,10 +809,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Expand all points semantically
     const expandedPoints = await expandPoints(validPoints)
 
-    // Step 2: Build transition matrix
-    // Default (class-defensible): discourse (low) + HF narrative NLI + encoder cosine (symmetric semantics).
-    // Fallbacks: discourse + encoder only; then OpenAI encoder + discourse; then discourse alone.
-    // No Jaccard on the hot path.
+    // Step 2: discourse (rules) + encoder cosine; HF BGE first, then OpenAI, then discourse-only.
     const texts = expandedPoints.map((p) => p.expanded)
     const discourseMatrix = computeDiscourseMatrix(texts)
     const n = texts.length
@@ -1027,32 +817,26 @@ export async function POST(request: NextRequest) {
     let transitionMatrix: TransitionMatrix
     let orderingBlendUsed: string
     try {
-      const [embeddings, nliMatrix] = await Promise.all([
-        computeEmbeddings(texts, {
-          kind: "huggingface",
-          model: THREADER_EMBEDDING_MODEL,
-        }),
-        computeNarrativeNLIMatrix(texts),
-      ])
-      const cosRaw = computeCosineMatrix(embeddings)
-      transitionMatrix = blendThreeTransitionMatrices(
+      const embeddings = await computeEmbeddings(texts, {
+        kind: "huggingface",
+        model: THREADER_EMBEDDING_MODEL,
+      })
+      transitionMatrix = blendDiscourseEncoder(
         discourseMatrix,
-        nliMatrix,
-        cosRaw,
-        0.15,
-        0.45,
-        0.4,
+        computeCosineMatrix(embeddings),
+        0.35,
+        0.65,
       )
       orderingBlendUsed =
-        "PRIMARY — discourse(0.15) + NLI " +
-        THREADER_NLI_MODEL +
-        "(0.45) + HF BGE-small cosine " + THREADER_EMBEDDING_MODEL + " (0.40)"
-    } catch (primaryErr) {
-      console.warn("Threader primary blend (discourse + HF NLI + HF encoder) failed:", primaryErr)
+        "PRIMARY — discourse(0.35) + HF BGE-small cosine " +
+        THREADER_EMBEDDING_MODEL +
+        " (0.65)"
+    } catch (hfErr) {
+      console.warn("Threader HF embeddings failed:", hfErr)
       try {
         const embeddings = await computeEmbeddings(texts, {
-          kind: "huggingface",
-          model: THREADER_EMBEDDING_MODEL,
+          kind: "openai",
+          model: "text-embedding-3-small",
         })
         transitionMatrix = blendDiscourseEncoder(
           discourseMatrix,
@@ -1061,25 +845,10 @@ export async function POST(request: NextRequest) {
           0.65,
         )
         orderingBlendUsed =
-          "FALLBACK 1 — discourse(0.35) + HF BGE-small cosine " + THREADER_EMBEDDING_MODEL + " (0.65)"
+          "FALLBACK — discourse(0.35) + OpenAI text-embedding-3-small cosine (0.65)"
       } catch {
-        try {
-          const embeddings = await computeEmbeddings(texts, {
-            kind: "openai",
-            model: "text-embedding-3-small",
-          })
-          transitionMatrix = blendDiscourseEncoder(
-            discourseMatrix,
-            computeCosineMatrix(embeddings),
-            0.35,
-            0.65,
-          )
-          orderingBlendUsed =
-            "FALLBACK 2 — discourse(0.35) + OpenAI text-embedding-3-small cosine (0.65)"
-        } catch {
-          transitionMatrix = discourseMatrix
-          orderingBlendUsed = "FALLBACK 3 — discourse matrix only (no embeddings / NLI)"
-        }
+        transitionMatrix = discourseMatrix
+        orderingBlendUsed = "FALLBACK — discourse matrix only (no embeddings)"
       }
     }
 
