@@ -165,6 +165,9 @@ const ZERO_SHOT_NLI_MODELS = new Set(["facebook/bart-large-mnli"])
 // Object { text, text_pair } causes 400: TextClassificationPipeline missing 'inputs'.
 export const THREADER_NLI_MODEL = "typeform/distilbert-base-uncased-mnli"
 
+/** HF sentence embedding for Threader cosine signal: fast, strong on short English text. */
+export const THREADER_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
 const NARRATIVE_NLI_MODELS = new Set<string>([THREADER_NLI_MODEL])
 
 function narrativeHypothesisForPair(nextFragment: string): string {
@@ -1016,7 +1019,7 @@ export async function POST(request: NextRequest) {
     // Step 2: Build transition matrix
     // Default (class-defensible): discourse (low) + HF narrative NLI + encoder cosine (symmetric semantics).
     // Fallbacks: discourse + encoder only; then OpenAI encoder + discourse; then discourse alone.
-    // No Jaccard on the hot path (see ordering.test.ts matrix for control benchmarks).
+    // No Jaccard on the hot path.
     const texts = expandedPoints.map((p) => p.expanded)
     const discourseMatrix = computeDiscourseMatrix(texts)
     const n = texts.length
@@ -1027,7 +1030,7 @@ export async function POST(request: NextRequest) {
       const [embeddings, nliMatrix] = await Promise.all([
         computeEmbeddings(texts, {
           kind: "huggingface",
-          model: "sentence-transformers/all-mpnet-base-v2",
+          model: THREADER_EMBEDDING_MODEL,
         }),
         computeNarrativeNLIMatrix(texts),
       ])
@@ -1043,13 +1046,13 @@ export async function POST(request: NextRequest) {
       orderingBlendUsed =
         "PRIMARY — discourse(0.15) + NLI " +
         THREADER_NLI_MODEL +
-        "(0.45) + HF mpnet cosine sentence-transformers/all-mpnet-base-v2 (0.40)"
+        "(0.45) + HF BGE-small cosine " + THREADER_EMBEDDING_MODEL + " (0.40)"
     } catch (primaryErr) {
       console.warn("Threader primary blend (discourse + HF NLI + HF encoder) failed:", primaryErr)
       try {
         const embeddings = await computeEmbeddings(texts, {
           kind: "huggingface",
-          model: "sentence-transformers/all-mpnet-base-v2",
+          model: THREADER_EMBEDDING_MODEL,
         })
         transitionMatrix = blendDiscourseEncoder(
           discourseMatrix,
@@ -1058,7 +1061,7 @@ export async function POST(request: NextRequest) {
           0.65,
         )
         orderingBlendUsed =
-          "FALLBACK 1 — discourse(0.35) + HF mpnet cosine sentence-transformers/all-mpnet-base-v2 (0.65)"
+          "FALLBACK 1 — discourse(0.35) + HF BGE-small cosine " + THREADER_EMBEDDING_MODEL + " (0.65)"
       } catch {
         try {
           const embeddings = await computeEmbeddings(texts, {
@@ -1112,12 +1115,6 @@ export async function POST(request: NextRequest) {
 
     console.log("Generated bridges:", bridges)
 
-    const path = bestOrdering.path
-    const link_scores: number[] = []
-    for (let i = 0; i < path.length - 1; i++) {
-      link_scores.push(transitionMatrix[path[i]]?.[path[i + 1]] ?? 0)
-    }
-
     // Return results with original points (not expanded) and bridges
     return NextResponse.json({
       all_points: validPoints,
@@ -1130,8 +1127,6 @@ export async function POST(request: NextRequest) {
         ...bestOrdering,
         ordered_points: bestOrdering.path.map((idx) => validPoints[idx]),
         bridges: bridges,
-        link_scores,
-        // So the deployed app shows which path ran (server logs are easy to miss in Vercel UI).
         ordering_blend: orderingBlendUsed,
       },
     })

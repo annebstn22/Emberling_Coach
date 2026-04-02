@@ -2,11 +2,6 @@
 
 import { useState, useEffect, useRef } from "react"
 import { X } from "lucide-react"
-import ThreaderLinkGraphImport from "@/components/threader-link-graph"
-
-// Cursor/TS can resolve two @types/react copies (project vs hoisted); runtime is fine.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ThreaderLinkGraph = ThreaderLinkGraphImport as any
 
 interface ThreaderPoint {
   id: string
@@ -30,7 +25,6 @@ interface ThreaderResponse {
     score: number
     ordered_points: string[]
     bridges: string[]
-    link_scores?: number[]
     ordering_blend?: string
   }
 }
@@ -277,15 +271,6 @@ export default function ThreaderEmbedded({
               )}
             </div>
           ))}
-          {orderingResult?.best_ordering?.link_scores &&
-            orderingResult.best_ordering.link_scores.length > 0 && (
-              <div className="px-2">
-                <ThreaderLinkGraph
-                  linkScores={orderingResult.best_ordering.link_scores}
-                  variant="embedded"
-                />
-              </div>
-            )}
         </div>
         {/* Expand button */}
         <div className="flex justify-end">
@@ -426,15 +411,6 @@ export default function ThreaderEmbedded({
               )}
             </div>
           ))}
-          {orderingResult?.best_ordering?.link_scores &&
-            orderingResult.best_ordering.link_scores.length > 0 && (
-              <div className="px-2">
-                <ThreaderLinkGraph
-                  linkScores={orderingResult.best_ordering.link_scores}
-                  variant="embedded"
-                />
-              </div>
-            )}
         </div>
       )}
 

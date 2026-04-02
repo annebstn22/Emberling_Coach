@@ -17,8 +17,6 @@ import {
   RotateCcw,
   ChevronRight,
 } from "lucide-react"
-import ThreaderLinkGraph from "@/components/threader-link-graph"
-
 interface ThreaderPoint {
   id: string
   text: string
@@ -56,7 +54,6 @@ interface ThreaderResponse {
     score: number
     ordered_points: string[]
     bridges: string[]
-    link_scores?: number[]
     /** Which transition-matrix blend ran (PRIMARY vs FALLBACK 1–3). */
     ordering_blend?: string
   }
@@ -880,14 +877,6 @@ export default function ThreaderApp({
                   </div>
                 ))}
               </div>
-              {bestOrdering.link_scores && bestOrdering.link_scores.length > 0 && (
-                <div className="px-5 pb-4">
-                  <ThreaderLinkGraph
-                    linkScores={bestOrdering.link_scores}
-                    variant="standalone"
-                  />
-                </div>
-              )}
             </Card>
           )}
 
