@@ -17,7 +17,6 @@ import {
   RotateCcw,
   ChevronRight,
 } from "lucide-react"
-
 interface ThreaderPoint {
   id: string
   text: string
@@ -537,7 +536,6 @@ export default function ThreaderApp({
     }
   }
 
-  // Get reasoning text for each position (matching prototype)
   // Auto-resize textarea
   useEffect(() => {
     if (pointTextareaRef.current) {
@@ -545,17 +543,6 @@ export default function ThreaderApp({
       pointTextareaRef.current.style.height = `${pointTextareaRef.current.scrollHeight}px`
     }
   }, [currentPoint])
-
-  const getReasoningText = (position: number, total: number): string => {
-    const reasons = [
-      "opens with the concrete — earns trust before asking anything of the reader",
-      "builds on what came before — the reader is ready for this now",
-      "the payoff — lands harder because the groundwork is laid",
-      "reinforces the through-line — adds weight without repeating",
-      "closes the loop — brings the reader back, changed",
-    ]
-    return reasons[Math.min(position, reasons.length - 1)]
-  }
 
   // Show loading state if we're loading a session from URL
   if (isLoadingSession && sessionIdFromUrl) {
@@ -674,7 +661,7 @@ export default function ThreaderApp({
                 fontFamily: 'var(--font-mono)',
               }}
             >
-              type each point — get the best order, with reasoning
+              type each point — get the best order, with transitions
             </p>
 
             <div className="flex items-center gap-3 mb-4">
@@ -829,8 +816,8 @@ export default function ThreaderApp({
                     <div className="grid grid-cols-[20px_1fr] gap-3 p-4">
                       <span className="text-xs font-medium text-blue-600 mt-1">{idx + 1}</span>
                       <div>
-                        <div 
-                          className="text-sm mb-2"
+                        <div
+                          className="text-sm"
                           style={{
                             whiteSpace: 'pre-wrap',
                             wordWrap: 'break-word',
@@ -839,9 +826,6 @@ export default function ThreaderApp({
                           }}
                         >
                           {point}
-                        </div>
-                        <div className="text-xs italic text-gray-500 font-serif">
-                          {getReasoningText(idx, bestOrdering.ordered_points.length)}
                         </div>
                       </div>
                     </div>

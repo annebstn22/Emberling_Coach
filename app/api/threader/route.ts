@@ -1,5 +1,6 @@
 import { generateText } from "ai"
 import { type NextRequest, NextResponse } from "next/server"
+import OpenAI from "openai"
 
 interface OrderingResult {
   method: string
@@ -16,6 +17,291 @@ interface ExpandedPoint {
   original: string
   expanded: string
   index: number
+}
+
+export type EmbeddingVector = number[]
+export type TransitionMatrix = number[][]
+
+type EmbeddingProvider =
+  | { kind: "openai"; model: "text-embedding-3-small" }
+  | { kind: "huggingface"; model: string }
+
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY for embeddings")
+  }
+  return new OpenAI({ apiKey })
+}
+
+function getHuggingFaceApiKey(): string {
+  const apiKey = process.env.HUGGINGFACE_API_KEY
+  if (!apiKey) {
+    throw new Error("Missing HUGGINGFACE_API_KEY")
+  }
+  return apiKey
+}
+
+export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
+  if (a.length !== b.length) {
+    throw new Error(`Embedding length mismatch: ${a.length} vs ${b.length}`)
+  }
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i]
+    const bi = b[i]
+    dot += ai * bi
+    normA += ai * ai
+    normB += bi * bi
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  if (!Number.isFinite(denom) || denom === 0) return 0
+  const cos = dot / denom
+  // Numerical guard: should be [-1, 1], but clamp anyway
+  if (cos > 1) return 1
+  if (cos < -1) return -1
+  return cos
+}
+
+function meanPoolTokenEmbeddings(tokenEmbeddings: number[][]): number[] {
+  if (tokenEmbeddings.length === 0) return []
+  const dim = tokenEmbeddings[0]?.length ?? 0
+  const out = new Array(dim).fill(0)
+  for (const tokenVec of tokenEmbeddings) {
+    for (let d = 0; d < dim; d++) out[d] += tokenVec[d] ?? 0
+  }
+  for (let d = 0; d < dim; d++) out[d] /= tokenEmbeddings.length
+  return out
+}
+
+function normalizeVectorL2(vec: number[]): number[] {
+  let sumSq = 0
+  for (const v of vec) sumSq += v * v
+  const denom = Math.sqrt(sumSq)
+  if (!Number.isFinite(denom) || denom === 0) return vec
+  return vec.map((v) => v / denom)
+}
+
+async function computeEmbeddingsOpenAI(texts: string[]): Promise<EmbeddingVector[]> {
+  const openai = getOpenAIClient()
+  const resp = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts,
+  })
+  return resp.data
+    .sort((a, b) => a.index - b.index)
+    .map((d) => d.embedding as number[])
+}
+
+async function computeEmbeddingsHuggingFace(
+  texts: string[],
+  model: string,
+): Promise<EmbeddingVector[]> {
+  const apiKey = getHuggingFaceApiKey()
+  const encodedModel = model.split("/").map(encodeURIComponent).join("/")
+  const url = `https://router.huggingface.co/hf-inference/models/${encodedModel}/pipeline/feature-extraction`
+
+  const vectors: EmbeddingVector[] = []
+  for (const text of texts) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: text }),
+    })
+
+    if (!res.ok) {
+      const msg = await res.text().catch(() => "")
+      throw new Error(`HuggingFace embeddings failed (${res.status}): ${msg}`)
+    }
+
+    const json = (await res.json()) as unknown
+    // HF feature extraction can return:
+    // - number[] (already pooled)
+    // - number[][] (token embeddings)
+    if (Array.isArray(json) && typeof json[0] === "number") {
+      vectors.push(normalizeVectorL2(json as number[]))
+    } else if (Array.isArray(json) && Array.isArray(json[0])) {
+      const pooled = meanPoolTokenEmbeddings(json as number[][])
+      vectors.push(normalizeVectorL2(pooled))
+    } else {
+      throw new Error("Unexpected HuggingFace embeddings response shape")
+    }
+  }
+  return vectors
+}
+
+export async function computeEmbeddings(
+  texts: string[],
+  provider: EmbeddingProvider = { kind: "openai", model: "text-embedding-3-small" },
+): Promise<EmbeddingVector[]> {
+  if (texts.length === 0) return []
+  if (provider.kind === "openai") return computeEmbeddingsOpenAI(texts)
+  return computeEmbeddingsHuggingFace(texts, provider.model)
+}
+
+/** HF sentence embedding for Threader cosine signal: fast, strong on short English text. */
+export const THREADER_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+// ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
+// Maps each sentence to a narrative position [0,1]:
+//   0 = introduction/thesis   0.5 = body/continuation   1 = conclusion/consequence
+// The transition score A→B = sigmoid(5 * (posB − posA)):
+//   > 0.5 if B's discourse role is later than A's (correct ordering)
+//   < 0.5 if B should come before A (incorrect ordering)
+const DISCOURSE_MARKERS: Array<{ pattern: RegExp; position: number }> = [
+  // Introduction / thesis (0.1)
+  { pattern: /\b(i believe|i think|i want to|the question|to begin|at first|initially|i was|i felt|when i first|i joined|i started|i had|i used to)\b/i, position: 0.1 },
+  // Early illustration (0.3)
+  { pattern: /\b(for example|for instance|specifically|to illustrate|consider|such as|one example|take the case)\b/i, position: 0.3 },
+  // Mid continuation (0.5)
+  { pattern: /\b(also|additionally|furthermore|moreover|in addition|another|similarly|likewise|and then|and i)\b/i, position: 0.5 },
+  { pattern: /\b(then|next|after that|following this|after this)\b/i, position: 0.5 },
+  // Early temporal reference (0.2)
+  { pattern: /\b(before|previously|earlier|at the start|back when|at the time)\b/i, position: 0.2 },
+  // Later temporal (0.7)
+  { pattern: /\b(eventually|over time|by then|in time|after a while|soon after)\b/i, position: 0.7 },
+  // Contrast / pivot (0.6)
+  { pattern: /\b(however|but then|although|despite|on the other hand|in contrast|yet|nevertheless|while)\b/i, position: 0.6 },
+  // Realization / insight (0.65)
+  { pattern: /\b(i realized|i understood|i discovered|that reframed|that changed|i noticed|i learned that)\b/i, position: 0.65 },
+  // Causal consequence (0.75)
+  { pattern: /\b(therefore|thus|hence|as a result|consequently|because of this|this led|this caused|this meant|this helped|so i|which meant)\b/i, position: 0.75 },
+  // Conclusion / summary (0.9)
+  { pattern: /\b(in conclusion|in summary|to summarize|ultimately|to conclude|this is why|this shows|the lesson|what i learned|going forward|from now on|looking back|the takeaway)\b/i, position: 0.9 },
+  { pattern: /\b(finally|in the end|at the end|by the end|lastly|last of all)\b/i, position: 0.85 },
+]
+
+function discoursePositionScore(text: string): number {
+  const t = text.toLowerCase()
+  const matched: number[] = []
+  for (const { pattern, position } of DISCOURSE_MARKERS) {
+    if (pattern.test(t)) matched.push(position)
+  }
+  if (matched.length === 0) return 0.5
+  return matched.reduce((a, b) => a + b, 0) / matched.length
+}
+
+export function computeDiscourseMatrix(texts: string[]): TransitionMatrix {
+  const n = texts.length
+  const positions = texts.map(discoursePositionScore)
+  const matrix: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      // sigmoid(5 * Δposition): strong signal when discourse roles differ, neutral when same
+      matrix[i][j] = 1 / (1 + Math.exp(-5 * (positions[j] - positions[i])))
+    }
+  }
+  return matrix
+}
+
+// ─── LLM directional scoring (GPT-4o-mini, single batch call, Vercel AI Gateway) ─
+// Uses generateText + "openai/gpt-4o-mini" like expandPoints — no OPENAI_API_KEY required on Vercel.
+export async function computeLLMDirectionalScores(texts: string[]): Promise<TransitionMatrix> {
+  const n = texts.length
+  if (n === 0) return []
+
+  const fragmentsList = texts.map((t, i) => `[${i}]: "${t.replace(/"/g, "''")}"`).join("\n")
+  const { text: raw } = await generateText({
+    model: "openai/gpt-4o-mini",
+    temperature: 0,
+    prompt: `You are helping the Threader tool order user-supplied bullet points. The points might be diverse life experiences with hidden connecting themes (e.g. competitive diving and learning Korean both involve fear of performance and mastery through repetition).
+
+For each ordered pair (i→j), score 0.0–1.0: how well does j follow i to reveal an insight, deepen a theme, or build emotional progression? Score higher when j echoes or builds on a latent theme introduced in i.
+  1.0 = j clearly continues or deepens the thread from i
+  0.5 = neutral / could go either way
+  0.0 = j should definitely NOT follow i
+
+Fragments:
+${fragmentsList}
+
+Return ONLY a JSON ${n}×${n} matrix (array of arrays) where result[i][j] is the score for the pair (i→j). Set diagonal entries to 0. No explanation, no markdown.`,
+  })
+  const match = raw.match(/\[[\s\S]*\]/)
+  if (!match) throw new Error(`LLM directional score: could not parse JSON from response: ${raw.slice(0, 200)}`)
+
+  const parsed = JSON.parse(match[0]) as unknown
+  if (!Array.isArray(parsed) || parsed.length !== n) {
+    throw new Error(`LLM directional score: unexpected matrix shape (expected ${n}×${n})`)
+  }
+  const mat = parsed as TransitionMatrix
+  for (let i = 0; i < n; i++) {
+    const row = mat[i]
+    if (!Array.isArray(row) || row.length !== n) {
+      throw new Error(`LLM directional score: bad row ${i}`)
+    }
+    for (let j = 0; j < n; j++) {
+      const v = row[j]
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        throw new Error(`LLM directional score: non-numeric at [${i}][${j}]`)
+      }
+      if (i === j) mat[i][j] = 0
+    }
+  }
+  return mat
+}
+
+// ─── Cosine similarity matrix from embeddings ─────────────────────────────────
+function computeCosineMatrix(embeddings: EmbeddingVector[]): TransitionMatrix {
+  const n = embeddings.length
+  const out: TransitionMatrix = Array.from({ length: n }, () =>
+    new Array(n).fill(0),
+  )
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      out[i][j] = cosineSimilarity(embeddings[i], embeddings[j])
+    }
+  }
+  return out
+}
+
+export function buildTransitionMatrix(
+  cosineMatrix: TransitionMatrix,
+  directionalMatrix: TransitionMatrix,
+  alpha: number,
+  beta: number,
+): TransitionMatrix {
+  const n = cosineMatrix.length
+  const out: TransitionMatrix = Array.from({ length: n }, () =>
+    new Array(n).fill(0),
+  )
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      // Map cosine [-1, 1] → [0, 1] so it composes cleanly with probabilities
+      const cos01 = (cosineMatrix[i][j] + 1) / 2
+      const dir01 = directionalMatrix[i]?.[j] ?? 0
+      out[i][j] = alpha * cos01 + beta * dir01
+    }
+  }
+
+  return out
+}
+
+function blendDiscourseEncoder(
+  discourse: TransitionMatrix,
+  cosRaw: TransitionMatrix,
+  wDisc: number,
+  wEnc: number,
+): TransitionMatrix {
+  const n = discourse.length
+  const t = wDisc + wEnc
+  const out: TransitionMatrix = Array.from({ length: n }, () => new Array(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      out[i][j] =
+        (wDisc * (discourse[i]?.[j] ?? 0) + wEnc * (((cosRaw[i]?.[j] ?? 0) + 1) / 2)) / t
+    }
+  }
+  return out
 }
 
 // Semantic expansion using LLM (like IdeaExpander from Hex notebook)
@@ -179,35 +465,11 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
   }
 }
 
-// Calculate semantic similarity using embeddings
-// For now, using lexical + length similarity as placeholder
-// TODO: Replace with actual embeddings (OpenAI embeddings API or @xenova/transformers)
-function calculateTransitionScore(
-  point1: ExpandedPoint,
-  point2: ExpandedPoint,
-): number {
-  // Use expanded text for better semantic matching
-  const text1 = point1.expanded.toLowerCase()
-  const text2 = point2.expanded.toLowerCase()
-
-  // Lexical overlap
-  const words1 = new Set(text1.split(/\s+/))
-  const words2 = new Set(text2.split(/\s+/))
-  const intersection = new Set([...words1].filter((x) => words2.has(x)))
-  const union = new Set([...words1, ...words2])
-  const lexicalScore = union.size > 0 ? intersection.size / union.size : 0
-
-  // Length similarity
-  const len1 = text1.length
-  const len2 = text2.length
-  const lengthScore = 1 - Math.abs(len1 - len2) / Math.max(len1, len2, 1)
-
-  // Combined score (will be replaced with cosine similarity of embeddings)
-  return 0.5 * lexicalScore + 0.5 * lengthScore
-}
-
 // Greedy algorithm: always pick best next transition
-function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
+function greedyOrdering(
+  expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
+): OrderingResult {
   if (expandedPoints.length <= 1) {
     return {
       method: "Greedy Search",
@@ -234,10 +496,7 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
     let bestScore = -1
 
     for (const nextIdx of remaining) {
-      const score = calculateTransitionScore(
-        expandedPoints[current],
-        expandedPoints[nextIdx],
-      )
+      const score = transitionMatrix[current]?.[nextIdx] ?? 0
       if (score > bestScore) {
         bestScore = score
         bestNext = nextIdx
@@ -249,18 +508,17 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
       remaining.delete(bestNext)
     } else {
       // Fallback: add any remaining
-      path.push(remaining.values().next().value)
-      remaining.delete(path[path.length - 1])
+      const fallback = remaining.values().next().value as number | undefined
+      if (fallback == null) break
+      path.push(fallback)
+      remaining.delete(fallback)
     }
   }
 
   // Calculate average transition score
   let totalScore = 0
   for (let i = 0; i < path.length - 1; i++) {
-    totalScore += calculateTransitionScore(
-      expandedPoints[path[i]],
-      expandedPoints[path[i + 1]],
-    )
+    totalScore += transitionMatrix[path[i]]?.[path[i + 1]] ?? 0
   }
   const avgScore = path.length > 1 ? totalScore / (path.length - 1) : 1.0
 
@@ -275,6 +533,7 @@ function greedyOrdering(expandedPoints: ExpandedPoint[]): OrderingResult {
 // Simulated annealing for better optimization
 function simulatedAnnealingOrdering(
   expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
   maxIterations = 1000,
 ): OrderingResult {
   if (expandedPoints.length <= 1) {
@@ -295,10 +554,7 @@ function simulatedAnnealingOrdering(
 
   let currentScore = 0
   for (let i = 0; i < currentPath.length - 1; i++) {
-    currentScore += calculateTransitionScore(
-      expandedPoints[currentPath[i]],
-      expandedPoints[currentPath[i + 1]],
-    )
+    currentScore += transitionMatrix[currentPath[i]]?.[currentPath[i + 1]] ?? 0
   }
   currentScore =
     currentPath.length > 1 ? currentScore / (currentPath.length - 1) : 1.0
@@ -319,10 +575,7 @@ function simulatedAnnealingOrdering(
     // Calculate new score
     let newScore = 0
     for (let k = 0; k < newPath.length - 1; k++) {
-      newScore += calculateTransitionScore(
-        expandedPoints[newPath[k]],
-        expandedPoints[newPath[k + 1]],
-      )
+      newScore += transitionMatrix[newPath[k]]?.[newPath[k + 1]] ?? 0
     }
     newScore = newPath.length > 1 ? newScore / (newPath.length - 1) : 1.0
 
@@ -352,6 +605,7 @@ function simulatedAnnealingOrdering(
 // Genetic algorithm
 function geneticAlgorithmOrdering(
   expandedPoints: ExpandedPoint[],
+  transitionMatrix: TransitionMatrix,
   populationSize = 30,
   generations = 50,
 ): OrderingResult {
@@ -379,10 +633,7 @@ function geneticAlgorithmOrdering(
   const fitness = (path: number[]): number => {
     let score = 0
     for (let i = 0; i < path.length - 1; i++) {
-      score += calculateTransitionScore(
-        expandedPoints[path[i]],
-        expandedPoints[path[i + 1]],
-      )
+      score += transitionMatrix[path[i]]?.[path[i + 1]] ?? 0
     }
     return path.length > 1 ? score / (path.length - 1) : 1.0
   }
@@ -558,17 +809,62 @@ export async function POST(request: NextRequest) {
     // Step 1: Expand all points semantically
     const expandedPoints = await expandPoints(validPoints)
 
-    // Step 2: Generate three orderings using different algorithms
+    // Step 2: discourse (rules) + encoder cosine; HF BGE first, then OpenAI, then discourse-only.
+    const texts = expandedPoints.map((p) => p.expanded)
+    const discourseMatrix = computeDiscourseMatrix(texts)
+    const n = texts.length
+
+    let transitionMatrix: TransitionMatrix
+    let orderingBlendUsed: string
+    try {
+      const embeddings = await computeEmbeddings(texts, {
+        kind: "huggingface",
+        model: THREADER_EMBEDDING_MODEL,
+      })
+      transitionMatrix = blendDiscourseEncoder(
+        discourseMatrix,
+        computeCosineMatrix(embeddings),
+        0.35,
+        0.65,
+      )
+      orderingBlendUsed =
+        "PRIMARY — discourse(0.35) + HF BGE-small cosine " +
+        THREADER_EMBEDDING_MODEL +
+        " (0.65)"
+    } catch (hfErr) {
+      console.warn("Threader HF embeddings failed:", hfErr)
+      try {
+        const embeddings = await computeEmbeddings(texts, {
+          kind: "openai",
+          model: "text-embedding-3-small",
+        })
+        transitionMatrix = blendDiscourseEncoder(
+          discourseMatrix,
+          computeCosineMatrix(embeddings),
+          0.35,
+          0.65,
+        )
+        orderingBlendUsed =
+          "FALLBACK — discourse(0.35) + OpenAI text-embedding-3-small cosine (0.65)"
+      } catch {
+        transitionMatrix = discourseMatrix
+        orderingBlendUsed = "FALLBACK — discourse matrix only (no embeddings)"
+      }
+    }
+
+    console.log("[Threader] Ordering blend in use:", orderingBlendUsed)
+
+    // Step 3: Generate three orderings using different algorithms
     const orderings: OrderingResult[] = [
-      greedyOrdering(expandedPoints),
-      simulatedAnnealingOrdering(expandedPoints),
-      geneticAlgorithmOrdering(expandedPoints),
+      greedyOrdering(expandedPoints, transitionMatrix),
+      simulatedAnnealingOrdering(expandedPoints, transitionMatrix),
+      geneticAlgorithmOrdering(expandedPoints, transitionMatrix),
     ]
 
     // Sort by score (best first)
     orderings.sort((a, b) => b.score - a.score)
 
-    // Step 3: Generate bridge text for the best ordering
+    // Step 4: Generate bridge text for the best ordering
     const bestOrdering = orderings[0]
     const bridges: string[] = []
 
@@ -600,6 +896,7 @@ export async function POST(request: NextRequest) {
         ...bestOrdering,
         ordered_points: bestOrdering.path.map((idx) => validPoints[idx]),
         bridges: bridges,
+        ordering_blend: orderingBlendUsed,
       },
     })
   } catch (error) {
