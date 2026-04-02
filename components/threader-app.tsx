@@ -54,8 +54,6 @@ interface ThreaderResponse {
     score: number
     ordered_points: string[]
     bridges: string[]
-    /** Which transition-matrix blend ran (PRIMARY vs FALLBACK 1–3). */
-    ordering_blend?: string
   }
 }
 
@@ -538,7 +536,6 @@ export default function ThreaderApp({
     }
   }
 
-  // Get reasoning text for each position (matching prototype)
   // Auto-resize textarea
   useEffect(() => {
     if (pointTextareaRef.current) {
@@ -546,17 +543,6 @@ export default function ThreaderApp({
       pointTextareaRef.current.style.height = `${pointTextareaRef.current.scrollHeight}px`
     }
   }, [currentPoint])
-
-  const getReasoningText = (position: number, total: number): string => {
-    const reasons = [
-      "opens with the concrete — earns trust before asking anything of the reader",
-      "builds on what came before — the reader is ready for this now",
-      "the payoff — lands harder because the groundwork is laid",
-      "reinforces the through-line — adds weight without repeating",
-      "closes the loop — brings the reader back, changed",
-    ]
-    return reasons[Math.min(position, reasons.length - 1)]
-  }
 
   // Show loading state if we're loading a session from URL
   if (isLoadingSession && sessionIdFromUrl) {
@@ -675,7 +661,7 @@ export default function ThreaderApp({
                 fontFamily: 'var(--font-mono)',
               }}
             >
-              type each point — get the best order, with reasoning
+              type each point — get the best order, with transitions
             </p>
 
             <div className="flex items-center gap-3 mb-4">
@@ -824,37 +810,14 @@ export default function ThreaderApp({
                   edit points
                 </button>
               </div>
-              {bestOrdering.ordering_blend && (
-                <div
-                  className="px-5 py-2.5 border-b border-gray-200"
-                  style={{ background: "var(--gold-bg, #fdf8ee)" }}
-                >
-                  <div
-                    className="text-[0.6rem] uppercase tracking-[0.12em] mb-1"
-                    style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}
-                  >
-                    Ordering blend (this deployment)
-                  </div>
-                  <p
-                    className="text-[0.7rem] leading-snug break-words m-0"
-                    style={{
-                      color: "var(--ink2, #4a4640)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                    title={bestOrdering.ordering_blend}
-                  >
-                    {bestOrdering.ordering_blend}
-                  </p>
-                </div>
-              )}
               <div className="divide-y divide-gray-200">
                 {bestOrdering.ordered_points.map((point, idx) => (
                   <div key={idx}>
                     <div className="grid grid-cols-[20px_1fr] gap-3 p-4">
                       <span className="text-xs font-medium text-blue-600 mt-1">{idx + 1}</span>
                       <div>
-                        <div 
-                          className="text-sm mb-2"
+                        <div
+                          className="text-sm"
                           style={{
                             whiteSpace: 'pre-wrap',
                             wordWrap: 'break-word',
@@ -863,9 +826,6 @@ export default function ThreaderApp({
                           }}
                         >
                           {point}
-                        </div>
-                        <div className="text-xs italic text-gray-500 font-serif">
-                          {getReasoningText(idx, bestOrdering.ordered_points.length)}
                         </div>
                       </div>
                     </div>

@@ -25,18 +25,8 @@ interface ThreaderResponse {
     score: number
     ordered_points: string[]
     bridges: string[]
-    ordering_blend?: string
   }
 }
-
-// Reasoning text for each position (matching prototype)
-const REASONS = [
-  "opens with the concrete — earns trust before asking anything of the reader",
-  "builds on what came before — the reader is ready for this now",
-  "the payoff — lands harder because the groundwork is laid",
-  "reinforces the through-line — adds weight without repeating",
-  "closes the loop — brings the reader back, changed",
-]
 
 export default function ThreaderEmbedded({
   onOrderingComplete,
@@ -233,35 +223,20 @@ export default function ThreaderEmbedded({
     return (
       <div className="space-y-3">
         <div className="bg-white border border-[#a8c8e8] rounded-lg overflow-hidden">
-          {orderingResult.best_ordering.ordering_blend && (
-            <div className="px-3 py-2 border-b border-[#e0dbd0] bg-[#fdf8ee]">
-              <div className="font-mono text-[0.54rem] uppercase tracking-wider text-[#9a948a] mb-0.5">
-                Ordering blend
-              </div>
-              <p className="font-mono text-[0.65rem] text-[#4a4640] m-0 leading-snug break-words">
-                {orderingResult.best_ordering.ordering_blend}
-              </p>
-            </div>
-          )}
           {orderedPoints.map((point, idx) => (
             <div key={idx}>
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm">
                 <span className="text-[0.54rem] text-[#1a4a6e] mt-0.5">{idx + 1}</span>
-                <div>
-                  <div 
-                    className="text-[#1a1814] mb-1"
-                    style={{
-                      whiteSpace: 'pre-wrap',
-                      wordWrap: 'break-word',
-                      overflowWrap: 'break-word',
-                      lineHeight: '1.5'
-                    }}
-                  >
-                    {point}
-                  </div>
-                  <div className="font-serif italic text-xs text-[#9a948a] leading-snug">
-                    {REASONS[Math.min(idx, REASONS.length - 1)]}
-                  </div>
+                <div
+                  className="text-[#1a1814]"
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    overflowWrap: 'break-word',
+                    lineHeight: '1.5'
+                  }}
+                >
+                  {point}
                 </div>
               </div>
               {idx < orderedPoints.length - 1 && bridges[idx] && (
@@ -373,35 +348,20 @@ export default function ThreaderEmbedded({
       {/* Result */}
       {orderingResult && (
         <div className="bg-white border border-[#a8c8e8] rounded-lg overflow-hidden mt-2 animate-in fade-in slide-in-from-bottom-2">
-          {orderingResult.best_ordering.ordering_blend && (
-            <div className="px-3 py-2 border-b border-[#e0dbd0] bg-[#fdf8ee]">
-              <div className="font-mono text-[0.54rem] uppercase tracking-wider text-[#9a948a] mb-0.5">
-                Ordering blend
-              </div>
-              <p className="font-mono text-[0.65rem] text-[#4a4640] m-0 leading-snug break-words">
-                {orderingResult.best_ordering.ordering_blend}
-              </p>
-            </div>
-          )}
           {orderedPoints.map((point, idx) => (
             <div key={idx}>
               <div className="px-3 py-2.5 border-b border-[#e0dbd0] grid grid-cols-[18px_1fr] gap-2.5 text-sm animate-in fade-in slide-in-from-left-2">
                 <span className="text-[0.54rem] text-[#1a4a6e] mt-0.5">{idx + 1}</span>
-                <div>
-                  <div 
-                    className="text-[#1a1814] mb-1"
-                    style={{
-                      whiteSpace: 'pre-wrap',
-                      wordWrap: 'break-word',
-                      overflowWrap: 'break-word',
-                      lineHeight: '1.5'
-                    }}
-                  >
-                    {point}
-                  </div>
-                  <div className="font-serif italic text-xs text-[#9a948a] leading-snug">
-                    {REASONS[Math.min(idx, REASONS.length - 1)]}
-                  </div>
+                <div
+                  className="text-[#1a1814]"
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    overflowWrap: 'break-word',
+                    lineHeight: '1.5'
+                  }}
+                >
+                  {point}
                 </div>
               </div>
               {idx < orderedPoints.length - 1 && bridges[idx] && (
