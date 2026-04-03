@@ -200,52 +200,6 @@ export function computeDiscourseMatrix(texts: string[]): TransitionMatrix {
   return matrix
 }
 
-// ─── LLM directional scoring (GPT-4o-mini, single batch call, Vercel AI Gateway) ─
-// Uses generateText + "openai/gpt-4o-mini" like expandPoints — no OPENAI_API_KEY required on Vercel.
-export async function computeLLMDirectionalScores(texts: string[]): Promise<TransitionMatrix> {
-  const n = texts.length
-  if (n === 0) return []
-
-  const fragmentsList = texts.map((t, i) => `[${i}]: "${t.replace(/"/g, "''")}"`).join("\n")
-  const { text: raw } = await generateText({
-    model: "openai/gpt-4o-mini",
-    temperature: 0,
-    prompt: `You are helping the Threader tool order user-supplied bullet points. The points might be diverse life experiences with hidden connecting themes (e.g. competitive diving and learning Korean both involve fear of performance and mastery through repetition).
-
-For each ordered pair (i→j), score 0.0–1.0: how well does j follow i to reveal an insight, deepen a theme, or build emotional progression? Score higher when j echoes or builds on a latent theme introduced in i.
-  1.0 = j clearly continues or deepens the thread from i
-  0.5 = neutral / could go either way
-  0.0 = j should definitely NOT follow i
-
-Fragments:
-${fragmentsList}
-
-Return ONLY a JSON ${n}×${n} matrix (array of arrays) where result[i][j] is the score for the pair (i→j). Set diagonal entries to 0. No explanation, no markdown.`,
-  })
-  const match = raw.match(/\[[\s\S]*\]/)
-  if (!match) throw new Error(`LLM directional score: could not parse JSON from response: ${raw.slice(0, 200)}`)
-
-  const parsed = JSON.parse(match[0]) as unknown
-  if (!Array.isArray(parsed) || parsed.length !== n) {
-    throw new Error(`LLM directional score: unexpected matrix shape (expected ${n}×${n})`)
-  }
-  const mat = parsed as TransitionMatrix
-  for (let i = 0; i < n; i++) {
-    const row = mat[i]
-    if (!Array.isArray(row) || row.length !== n) {
-      throw new Error(`LLM directional score: bad row ${i}`)
-    }
-    for (let j = 0; j < n; j++) {
-      const v = row[j]
-      if (typeof v !== "number" || !Number.isFinite(v)) {
-        throw new Error(`LLM directional score: non-numeric at [${i}][${j}]`)
-      }
-      if (i === j) mat[i][j] = 0
-    }
-  }
-  return mat
-}
-
 // ─── Cosine similarity matrix from embeddings ─────────────────────────────────
 function computeCosineMatrix(embeddings: EmbeddingVector[]): TransitionMatrix {
   const n = embeddings.length
