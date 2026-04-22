@@ -1,6 +1,6 @@
 # Minimalist Writing Assistant
 
-A dual-tool writing ecosystem featuring Pre-Writing Ideation (inspired by Oblique Strategies) and a structured Writing Coach with AI-powered task breakdown and personalized coaching.
+A writing ecosystem with Pre-Writing Ideation (Oblique Strategies–style), a structured Writing Coach, and a **Threader** that orders narrative bullet points with AI-assisted transitions.
 
 ## Features
 
@@ -18,6 +18,11 @@ A dual-tool writing ecosystem featuring Pre-Writing Ideation (inspired by Obliqu
 - Task breakdown and duration customization
 - Progress tracking with word count and time metrics
 - 5-minute micro-tasks for quick writing sessions
+
+### Threader
+- Enter several short points; the API suggests a narrative order using discourse heuristics plus embeddings (Hugging Face `BAAI/bge-small-en-v1.5`, with OpenAI fallback).
+- Short transition phrases between consecutive points are generated via the Vercel AI SDK (`openai/gpt-4o-mini`).
+- Standalone `/threader` sessions and an embedded Threader inside the Writing Coach share the same backend (`POST /api/threader`).
 
 ## Tech Stack
 
@@ -81,6 +86,10 @@ BLOB_READ_WRITE_TOKEN="your-blob-read-write-token"
 
 # AI Configuration (Optional - uses Vercel AI Gateway by default)
 GOOGLE_GENERATIVE_AI_API_KEY="your-google-ai-key"
+
+# Threader: OpenAI embeddings fallback and HF Inference (primary encoder)
+OPENAI_API_KEY="your-openai-key"
+HUGGINGFACE_API_KEY="your-huggingface-token"
 \`\`\`
 
 ### 4. Obtain Integration Credentials

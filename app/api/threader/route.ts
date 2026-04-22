@@ -22,8 +22,50 @@ interface ExpandedPoint {
 export type EmbeddingVector = number[]
 export type TransitionMatrix = number[][]
 
+/** Hugging Face sentence-embedding model id for Threader cosine similarity. */
+export const THREADER_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+/** OpenAI embedding model id when HF inference is unavailable. */
+export const THREADER_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small" as const
+
+const BLEND_WEIGHT_DISCOURSE = 0.35
+const BLEND_WEIGHT_ENCODER = 0.65
+const DISCOURSE_TRANSITION_STEEPNESS = 5
+const SIMULATED_ANNEALING_MAX_ITERATIONS = 1000
+const SIMULATED_ANNEALING_INITIAL_TEMP = 1.0
+const SIMULATED_ANNEALING_COOLING_RATE = 0.995
+const GENETIC_POPULATION_SIZE = 30
+const GENETIC_GENERATIONS = 50
+const GENETIC_TOURNAMENT_SIZE = 5
+const GENETIC_CROSSOVER_RATE = 0.7
+const GENETIC_MUTATION_RATE = 0.1
+const EXPANSION_MIN_EXTRA_CHARS = 15
+const BRIDGE_PHRASE_MAX_CHARS = 50
+const DEFAULT_BRIDGE_PHRASES = [
+  "which naturally leads to",
+  "and thus",
+  "building toward",
+  "until finally",
+  "as a result",
+  "consequently",
+] as const
+
+// Discourse markers → narrative position [0,1]; pair scores use sigmoid(steepness * Δposition).
+const DISCOURSE_MARKERS: Array<{ pattern: RegExp; position: number }> = [
+  { pattern: /\b(i believe|i think|i want to|the question|to begin|at first|initially|i was|i felt|when i first|i joined|i started|i had|i used to)\b/i, position: 0.1 },
+  { pattern: /\b(for example|for instance|specifically|to illustrate|consider|such as|one example|take the case)\b/i, position: 0.3 },
+  { pattern: /\b(also|additionally|furthermore|moreover|in addition|another|similarly|likewise|and then|and i)\b/i, position: 0.5 },
+  { pattern: /\b(then|next|after that|following this|after this)\b/i, position: 0.5 },
+  { pattern: /\b(before|previously|earlier|at the start|back when|at the time)\b/i, position: 0.2 },
+  { pattern: /\b(eventually|over time|by then|in time|after a while|soon after)\b/i, position: 0.7 },
+  { pattern: /\b(however|but then|although|despite|on the other hand|in contrast|yet|nevertheless|while)\b/i, position: 0.6 },
+  { pattern: /\b(i realized|i understood|i discovered|that reframed|that changed|i noticed|i learned that)\b/i, position: 0.65 },
+  { pattern: /\b(therefore|thus|hence|as a result|consequently|because of this|this led|this caused|this meant|this helped|so i|which meant)\b/i, position: 0.75 },
+  { pattern: /\b(in conclusion|in summary|to summarize|ultimately|to conclude|this is why|this shows|the lesson|what i learned|going forward|from now on|looking back|the takeaway)\b/i, position: 0.9 },
+  { pattern: /\b(finally|in the end|at the end|by the end|lastly|last of all)\b/i, position: 0.85 },
+]
+
 type EmbeddingProvider =
-  | { kind: "openai"; model: "text-embedding-3-small" }
+  | { kind: "openai"; model: typeof THREADER_OPENAI_EMBEDDING_MODEL }
   | { kind: "huggingface"; model: string }
 
 function getOpenAIClient(): OpenAI {
@@ -87,7 +129,7 @@ function normalizeVectorL2(vec: number[]): number[] {
 async function computeEmbeddingsOpenAI(texts: string[]): Promise<EmbeddingVector[]> {
   const openai = getOpenAIClient()
   const resp = await openai.embeddings.create({
-    model: "text-embedding-3-small",
+    model: THREADER_OPENAI_EMBEDDING_MODEL,
     input: texts,
   })
   return resp.data
@@ -116,7 +158,10 @@ async function computeEmbeddingsHuggingFace(
 
     if (!res.ok) {
       const msg = await res.text().catch(() => "")
-      throw new Error(`HuggingFace embeddings failed (${res.status}): ${msg}`)
+      throw new Error(
+        `HuggingFace embeddings failed (HTTP ${res.status}): ${msg.slice(0, 200)}. ` +
+          "429 often means rate limit; 503 can mean the model is loading—retry shortly.",
+      )
     }
 
     const json = (await res.json()) as unknown
@@ -137,44 +182,12 @@ async function computeEmbeddingsHuggingFace(
 
 export async function computeEmbeddings(
   texts: string[],
-  provider: EmbeddingProvider = { kind: "openai", model: "text-embedding-3-small" },
+  provider: EmbeddingProvider = { kind: "openai", model: THREADER_OPENAI_EMBEDDING_MODEL },
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return []
   if (provider.kind === "openai") return computeEmbeddingsOpenAI(texts)
   return computeEmbeddingsHuggingFace(texts, provider.model)
 }
-
-/** HF sentence embedding for Threader cosine signal: fast, strong on short English text. */
-export const THREADER_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-
-// ─── Discourse marker scoring (rule-based, no API, genuinely asymmetric) ────────
-// Maps each sentence to a narrative position [0,1]:
-//   0 = introduction/thesis   0.5 = body/continuation   1 = conclusion/consequence
-// The transition score A→B = sigmoid(5 * (posB − posA)):
-//   > 0.5 if B's discourse role is later than A's (correct ordering)
-//   < 0.5 if B should come before A (incorrect ordering)
-const DISCOURSE_MARKERS: Array<{ pattern: RegExp; position: number }> = [
-  // Introduction / thesis (0.1)
-  { pattern: /\b(i believe|i think|i want to|the question|to begin|at first|initially|i was|i felt|when i first|i joined|i started|i had|i used to)\b/i, position: 0.1 },
-  // Early illustration (0.3)
-  { pattern: /\b(for example|for instance|specifically|to illustrate|consider|such as|one example|take the case)\b/i, position: 0.3 },
-  // Mid continuation (0.5)
-  { pattern: /\b(also|additionally|furthermore|moreover|in addition|another|similarly|likewise|and then|and i)\b/i, position: 0.5 },
-  { pattern: /\b(then|next|after that|following this|after this)\b/i, position: 0.5 },
-  // Early temporal reference (0.2)
-  { pattern: /\b(before|previously|earlier|at the start|back when|at the time)\b/i, position: 0.2 },
-  // Later temporal (0.7)
-  { pattern: /\b(eventually|over time|by then|in time|after a while|soon after)\b/i, position: 0.7 },
-  // Contrast / pivot (0.6)
-  { pattern: /\b(however|but then|although|despite|on the other hand|in contrast|yet|nevertheless|while)\b/i, position: 0.6 },
-  // Realization / insight (0.65)
-  { pattern: /\b(i realized|i understood|i discovered|that reframed|that changed|i noticed|i learned that)\b/i, position: 0.65 },
-  // Causal consequence (0.75)
-  { pattern: /\b(therefore|thus|hence|as a result|consequently|because of this|this led|this caused|this meant|this helped|so i|which meant)\b/i, position: 0.75 },
-  // Conclusion / summary (0.9)
-  { pattern: /\b(in conclusion|in summary|to summarize|ultimately|to conclude|this is why|this shows|the lesson|what i learned|going forward|from now on|looking back|the takeaway)\b/i, position: 0.9 },
-  { pattern: /\b(finally|in the end|at the end|by the end|lastly|last of all)\b/i, position: 0.85 },
-]
 
 function discoursePositionScore(text: string): number {
   const t = text.toLowerCase()
@@ -193,8 +206,7 @@ export function computeDiscourseMatrix(texts: string[]): TransitionMatrix {
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (i === j) continue
-      // sigmoid(5 * Δposition): strong signal when discourse roles differ, neutral when same
-      matrix[i][j] = 1 / (1 + Math.exp(-5 * (positions[j] - positions[i])))
+      matrix[i][j] = 1 / (1 + Math.exp(-DISCOURSE_TRANSITION_STEEPNESS * (positions[j] - positions[i])))
     }
   }
   return matrix
@@ -212,30 +224,6 @@ function computeCosineMatrix(embeddings: EmbeddingVector[]): TransitionMatrix {
       out[i][j] = cosineSimilarity(embeddings[i], embeddings[j])
     }
   }
-  return out
-}
-
-export function buildTransitionMatrix(
-  cosineMatrix: TransitionMatrix,
-  directionalMatrix: TransitionMatrix,
-  alpha: number,
-  beta: number,
-): TransitionMatrix {
-  const n = cosineMatrix.length
-  const out: TransitionMatrix = Array.from({ length: n }, () =>
-    new Array(n).fill(0),
-  )
-
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue
-      // Map cosine [-1, 1] → [0, 1] so it composes cleanly with probabilities
-      const cos01 = (cosineMatrix[i][j] + 1) / 2
-      const dir01 = directionalMatrix[i]?.[j] ?? 0
-      out[i][j] = alpha * cos01 + beta * dir01
-    }
-  }
-
   return out
 }
 
@@ -258,11 +246,9 @@ function blendDiscourseEncoder(
   return out
 }
 
-// Semantic expansion using LLM (like IdeaExpander from Hex notebook)
 async function expandPoints(points: string[]): Promise<ExpandedPoint[]> {
   if (points.length === 0) return []
 
-  // Build consolidated prompt for batch expansion
   const numbered = points.map((p, i) => `${i + 1}. ${p}`).join("\n")
 
   const prompt = `Expand each bullet point into 1-2 complete sentences that make the topic and meaning explicit. 
@@ -294,23 +280,15 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
     const { text } = await generateText({
       model: "openai/gpt-4o-mini",
       prompt: prompt,
-      temperature: 0.5, // Slightly higher for more variation
+      temperature: 0.5,
     })
 
-    console.log("=== EXPANSION DEBUG ===")
-    console.log("Original points:", points)
-    console.log("Raw LLM response:", text)
-    console.log("Response length:", text.length)
-
-    // Parse output into list - handle various formats
     const lines = text.split("\n").filter((line) => line.trim())
-    console.log("Parsed lines:", lines)
 
     const expanded: ExpandedPoint[] = []
 
     for (let i = 0; i < points.length; i++) {
       const num = i + 1
-      // Try multiple patterns: "1.", "1)", "1. ", etc.
       const patterns = [
         new RegExp(`^${num}\\.\\s*(.+)$`, "i"),
         new RegExp(`^${num}\\)\\s*(.+)$`, "i"),
@@ -329,8 +307,7 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
             // Remove quotes and clean up
             expandedText = expandedText.replace(/^["']|["']$/g, "")
             expandedText = expandedText.trim()
-            
-            // Check if it's actually different from original (not just the same text)
+
             if (expandedText && expandedText.length > 0 && expandedText.toLowerCase() !== points[i].toLowerCase()) {
               found = true
               break
@@ -340,31 +317,20 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
         if (found) break
       }
 
-      // Validate that expansion is actually different and meaningful
-      const isDifferent = expandedText && 
-                         expandedText.toLowerCase().trim() !== points[i].toLowerCase().trim() &&
-                         expandedText.length > points[i].length + 15 // Must be at least 15 chars longer
-      
+      const isDifferent =
+        expandedText &&
+        expandedText.toLowerCase().trim() !== points[i].toLowerCase().trim() &&
+        expandedText.length > points[i].length + EXPANSION_MIN_EXTRA_CHARS
+
       if (found && isDifferent) {
-        // Good expansion from LLM
         expanded.push({
           original: points[i],
           expanded: expandedText,
           index: i,
         })
-        console.log(`✓ Point ${i + 1} LLM expanded: "${points[i]}" → "${expandedText.substring(0, 80)}..."`)
       } else {
-        // LLM either failed or returned same/similar text - use smart fallback
-        if (found) {
-          console.log(`⚠ Point ${i + 1} LLM returned too similar text, using fallback`)
-        } else {
-          console.log(`⚠ Point ${i + 1} parsing failed, using fallback`)
-        }
-        // If parsing failed or expansion is too similar, try a smarter fallback
-        // Make implicit meaning explicit based on common patterns
         let smartExpansion = points[i]
-        
-        // Try to infer what's implied and make it explicit
+
         if (points[i].toLowerCase().includes("worked") || points[i].toLowerCase().includes("job")) {
           smartExpansion = `${points[i]}, where I gained valuable experience and developed key skills.`
         } else if (points[i].toLowerCase().includes("learned") || points[i].toLowerCase().includes("studied")) {
@@ -372,30 +338,23 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
         } else if (points[i].toLowerCase().includes("want") || points[i].toLowerCase().includes("plan")) {
           smartExpansion = `${points[i]}, as this will help me achieve my goals and advance my understanding.`
         } else {
-          // Generic but better than the old one
           smartExpansion = `${points[i]}, which represents an important aspect of my experience and perspective.`
         }
-        
+
         expanded.push({
           original: points[i],
           expanded: smartExpansion,
           index: i,
         })
-        console.log(`⚠ Point ${i + 1} smart fallback: "${points[i]}" → "${smartExpansion.substring(0, 80)}..."`)
       }
     }
 
-    console.log("Final expanded points:", expanded.map((ep) => ({
-      original: ep.original,
-      expanded: ep.expanded.substring(0, 60),
-      changed: ep.original !== ep.expanded,
-      lengthDiff: ep.expanded.length - ep.original.length,
-    })))
-    console.log("=== END EXPANSION DEBUG ===")
-
     return expanded
   } catch (error) {
-    console.error("Error expanding points:", error)
+    console.error(
+      "Threader expandPoints: LLM call failed (check rate limits, API keys, and gateway availability):",
+      error,
+    )
     // Fallback: smart expansion based on content
     return points.map((p, i) => {
       let smartExpansion = p
@@ -419,7 +378,6 @@ Return ONLY a numbered list (1., 2., 3., etc.) with the expanded versions. No ot
   }
 }
 
-// Greedy algorithm: always pick best next transition
 function greedyOrdering(
   expandedPoints: ExpandedPoint[],
   transitionMatrix: TransitionMatrix,
@@ -484,11 +442,10 @@ function greedyOrdering(
   }
 }
 
-// Simulated annealing for better optimization
 function simulatedAnnealingOrdering(
   expandedPoints: ExpandedPoint[],
   transitionMatrix: TransitionMatrix,
-  maxIterations = 1000,
+  maxIterations = SIMULATED_ANNEALING_MAX_ITERATIONS,
 ): OrderingResult {
   if (expandedPoints.length <= 1) {
     return {
@@ -516,8 +473,8 @@ function simulatedAnnealingOrdering(
   let bestPath = [...currentPath]
   let bestScore = currentScore
 
-  let temperature = 1.0
-  const coolingRate = 0.995
+  let temperature = SIMULATED_ANNEALING_INITIAL_TEMP
+  const coolingRate = SIMULATED_ANNEALING_COOLING_RATE
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // Generate neighbor by swapping two random positions
@@ -556,12 +513,11 @@ function simulatedAnnealingOrdering(
   }
 }
 
-// Genetic algorithm
 function geneticAlgorithmOrdering(
   expandedPoints: ExpandedPoint[],
   transitionMatrix: TransitionMatrix,
-  populationSize = 30,
-  generations = 50,
+  populationSize = GENETIC_POPULATION_SIZE,
+  generations = GENETIC_GENERATIONS,
 ): OrderingResult {
   if (expandedPoints.length <= 1) {
     return {
@@ -599,7 +555,7 @@ function geneticAlgorithmOrdering(
     // Selection (tournament)
     const newPopulation: number[][] = []
     for (let i = 0; i < populationSize; i++) {
-      const tournamentSize = 5
+      const tournamentSize = GENETIC_TOURNAMENT_SIZE
       const tournament = []
       for (let j = 0; j < tournamentSize; j++) {
         const idx = Math.floor(Math.random() * populationSize)
@@ -613,7 +569,7 @@ function geneticAlgorithmOrdering(
 
     // Crossover (order crossover)
     for (let i = 0; i < populationSize; i += 2) {
-      if (i + 1 < populationSize && Math.random() < 0.7) {
+      if (i + 1 < populationSize && Math.random() < GENETIC_CROSSOVER_RATE) {
         const parent1 = newPopulation[i]
         const parent2 = newPopulation[i + 1]
         const start = Math.floor(Math.random() * parent1.length)
@@ -649,7 +605,7 @@ function geneticAlgorithmOrdering(
 
     // Mutation
     for (let i = 0; i < populationSize; i++) {
-      if (Math.random() < 0.1) {
+      if (Math.random() < GENETIC_MUTATION_RATE) {
         const idx1 = Math.floor(Math.random() * newPopulation[i].length)
         const idx2 = Math.floor(Math.random() * newPopulation[i].length)
         ;[newPopulation[i][idx1], newPopulation[i][idx2]] = [
@@ -674,7 +630,6 @@ function geneticAlgorithmOrdering(
   }
 }
 
-// Generate bridge text between ordered points using LLM
 async function generateBridgeText(
   point1: string,
   point2: string,
@@ -697,44 +652,26 @@ Return ONLY the transition phrase, nothing else. No quotes, no explanation.`
     const { text } = await generateText({
       model: "openai/gpt-4o-mini",
       prompt: prompt,
-      temperature: 0.8, // Higher temperature for more variety
+      temperature: 0.8,
     })
 
-    // Clean and return - remove quotes, extra whitespace, etc.
     let cleaned = text.trim()
-    cleaned = cleaned.replace(/^["']|["']$/g, "") // Remove surrounding quotes
-    cleaned = cleaned.replace(/^["']|["']$/g, "") // Remove any remaining quotes
-    cleaned = cleaned.split("\n")[0].trim() // Take first line only
-    cleaned = cleaned.replace(/^transition:?\s*/i, "") // Remove "Transition:" prefix if present
+    cleaned = cleaned.replace(/^["']|["']$/g, "")
+    cleaned = cleaned.replace(/^["']|["']$/g, "")
+    cleaned = cleaned.split("\n")[0].trim()
+    cleaned = cleaned.replace(/^transition:?\s*/i, "")
 
-    // If cleaned is empty or too long, use fallback
-    if (!cleaned || cleaned.length > 50) {
-      const bridges = [
-        "which naturally leads to",
-        "and thus",
-        "building toward",
-        "until finally",
-        "as a result",
-        "consequently",
-      ]
-      return bridges[position % bridges.length]
+    if (!cleaned || cleaned.length > BRIDGE_PHRASE_MAX_CHARS) {
+      return DEFAULT_BRIDGE_PHRASES[position % DEFAULT_BRIDGE_PHRASES.length]
     }
-
-    console.log(`Bridge ${position}: "${cleaned}" (from "${point1.substring(0, 30)}..." to "${point2.substring(0, 30)}...")`)
 
     return cleaned
   } catch (error) {
-    console.error("Error generating bridge text:", error)
-    // Fallback to varied default bridges based on position
-    const bridges = [
-      "which naturally leads to",
-      "and thus",
-      "building toward",
-      "until finally",
-      "as a result",
-      "consequently",
-    ]
-    return bridges[position % bridges.length]
+    console.error(
+      "Threader bridge: LLM failed (rate limits or gateway); using canned phrase:",
+      error,
+    )
+    return DEFAULT_BRIDGE_PHRASES[position % DEFAULT_BRIDGE_PHRASES.length]
   }
 }
 
@@ -750,7 +687,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Filter out empty points - use ALL valid points (no selection)
     const validPoints = points.filter((p) => p && p.trim().length > 0)
 
     if (validPoints.length < 2) {
@@ -760,13 +696,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Step 1: Expand all points semantically
     const expandedPoints = await expandPoints(validPoints)
 
-    // Step 2: discourse (rules) + encoder cosine; HF BGE first, then OpenAI, then discourse-only.
     const texts = expandedPoints.map((p) => p.expanded)
     const discourseMatrix = computeDiscourseMatrix(texts)
-    const n = texts.length
 
     let transitionMatrix: TransitionMatrix
     let orderingBlendUsed: string
@@ -778,28 +711,26 @@ export async function POST(request: NextRequest) {
       transitionMatrix = blendDiscourseEncoder(
         discourseMatrix,
         computeCosineMatrix(embeddings),
-        0.35,
-        0.65,
+        BLEND_WEIGHT_DISCOURSE,
+        BLEND_WEIGHT_ENCODER,
       )
       orderingBlendUsed =
-        "PRIMARY — discourse(0.35) + HF BGE-small cosine " +
-        THREADER_EMBEDDING_MODEL +
-        " (0.65)"
+        `PRIMARY — discourse(${BLEND_WEIGHT_DISCOURSE}) + HF BGE-small cosine ${THREADER_EMBEDDING_MODEL} (${BLEND_WEIGHT_ENCODER})`
     } catch (hfErr) {
       console.warn("Threader HF embeddings failed:", hfErr)
       try {
         const embeddings = await computeEmbeddings(texts, {
           kind: "openai",
-          model: "text-embedding-3-small",
+          model: THREADER_OPENAI_EMBEDDING_MODEL,
         })
         transitionMatrix = blendDiscourseEncoder(
           discourseMatrix,
           computeCosineMatrix(embeddings),
-          0.35,
-          0.65,
+          BLEND_WEIGHT_DISCOURSE,
+          BLEND_WEIGHT_ENCODER,
         )
         orderingBlendUsed =
-          "FALLBACK — discourse(0.35) + OpenAI text-embedding-3-small cosine (0.65)"
+          `FALLBACK — discourse(${BLEND_WEIGHT_DISCOURSE}) + OpenAI ${THREADER_OPENAI_EMBEDDING_MODEL} cosine (${BLEND_WEIGHT_ENCODER})`
       } catch {
         transitionMatrix = discourseMatrix
         orderingBlendUsed = "FALLBACK — discourse matrix only (no embeddings)"
@@ -808,21 +739,16 @@ export async function POST(request: NextRequest) {
 
     console.log("[Threader] Ordering blend in use:", orderingBlendUsed)
 
-    // Step 3: Generate three orderings using different algorithms
     const orderings: OrderingResult[] = [
       greedyOrdering(expandedPoints, transitionMatrix),
       simulatedAnnealingOrdering(expandedPoints, transitionMatrix),
       geneticAlgorithmOrdering(expandedPoints, transitionMatrix),
     ]
 
-    // Sort by score (best first)
     orderings.sort((a, b) => b.score - a.score)
 
-    // Step 4: Generate bridge text for the best ordering
     const bestOrdering = orderings[0]
     const bridges: string[] = []
-
-    console.log("Generating bridges for best ordering:", bestOrdering.path)
 
     for (let i = 0; i < bestOrdering.path.length - 1; i++) {
       const point1 = validPoints[bestOrdering.path[i]]
@@ -836,9 +762,6 @@ export async function POST(request: NextRequest) {
       bridges.push(bridge)
     }
 
-    console.log("Generated bridges:", bridges)
-
-    // Return results with original points (not expanded) and bridges
     return NextResponse.json({
       all_points: validPoints,
       expanded_points: expandedPoints.map((ep) => ep.expanded),
